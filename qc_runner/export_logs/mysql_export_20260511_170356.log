@@ -1,0 +1,17 @@
+[2026-05-11 17:03:56] [INFO] ============================================================
+[2026-05-11 17:03:56] [INFO] Optimized QC Runner
+[2026-05-11 17:03:56] [INFO]   Tables          : 10  |  Table workers  : 4
+[2026-05-11 17:03:56] [INFO]   Col workers     : 8  |  Batch size     : 50,000
+[2026-05-11 17:03:56] [INFO]   Large threshold : 1,000,000 rows  → server-side path
+[2026-05-11 17:03:56] [INFO]   Output          : exports/qc_opt_20260511_170356.csv
+[2026-05-11 17:03:56] [INFO] ============================================================
+[2026-05-11 17:03:57] [INFO] DB connection OK
+[2026-05-11 17:03:57] [INFO] Skipping 8 already-done: allergies, diagnosis, encounters, labs, procedures, radiology, ros, vitals
+[2026-05-11 17:03:57] [INFO] Processing 2 table(s): examination, note
+[2026-05-11 17:03:57] [INFO] [examination] Starting
+[2026-05-11 17:03:57] [INFO] [note] Starting
+[2026-05-11 17:03:59] [INFO] [note] Chunked Python path (≈0 rows < 1,000,000 threshold)
+[2026-05-11 17:03:59] [INFO] [examination] Server-side path (≈88,082,489 rows ≥ 1,000,000 threshold)
+[2026-05-11 17:04:01] [INFO] [examination] Phase 1: COUNT scan (nulls)...
+[2026-05-11 17:04:01] [WARNING] [note] No keyset column — SSCursor streaming
+[2026-05-11 17:04:02] [ERROR] [note] FAILED: (1146, "Table 'rgd_udm_silver.note' doesn't exist") (4.1s)

@@ -1,0 +1,13 @@
+[2026-05-11 17:04:32] [INFO] ============================================================
+[2026-05-11 17:04:32] [INFO] Optimized QC Runner
+[2026-05-11 17:04:32] [INFO]   Tables          : 9  |  Table workers  : 4
+[2026-05-11 17:04:32] [INFO]   Col workers     : 8  |  Batch size     : 50,000
+[2026-05-11 17:04:32] [INFO]   Large threshold : 1,000,000 rows  → server-side path
+[2026-05-11 17:04:32] [INFO]   Output          : exports/qc_opt_20260511_170432.csv
+[2026-05-11 17:04:32] [INFO] ============================================================
+[2026-05-11 17:04:33] [INFO] DB connection OK
+[2026-05-11 17:04:33] [INFO] Skipping 8 already-done: allergies, diagnosis, encounters, labs, procedures, radiology, ros, vitals
+[2026-05-11 17:04:33] [INFO] Processing 1 table(s): examination
+[2026-05-11 17:04:33] [INFO] [examination] Starting
+[2026-05-11 17:04:35] [INFO] [examination] Server-side path (≈88,082,489 rows ≥ 1,000,000 threshold)
+[2026-05-11 17:04:37] [INFO] [examination] Phase 1: COUNT scan (nulls)...

@@ -1,0 +1,7 @@
+[2026-05-11 15:27:22] [INFO] ============================================================
+[2026-05-11 15:27:22] [INFO] Optimized QC Runner
+[2026-05-11 15:27:22] [INFO]   Tables    : 10  |  Workers : 4
+[2026-05-11 15:27:22] [INFO]   BatchSize : 50,000  |  Output  : exports/qc_opt_20260511_152722.csv
+[2026-05-11 15:27:22] [WARNING]   Sample    : 100 rows per table
+[2026-05-11 15:27:22] [INFO] ============================================================
+[2026-05-11 15:27:23] [ERROR] Cannot connect to DB: (1045, "Access denied for user 'nd-siddharth'@'nd-platform-dev-openvpn-vm-us-east.us-east1-d.c.nd-platform-dev.' (using password: YES)")

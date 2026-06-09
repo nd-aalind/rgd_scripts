@@ -1,0 +1,56 @@
+{
+  "allergies": {
+    "status": "done",
+    "rows": 8778466,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:40:24.353651"
+  },
+  "diagnosis": {
+    "status": "done",
+    "rows": 47931830,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:44:29.698059"
+  },
+  "examination": {
+    "status": "done",
+    "rows": 90180319,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:45:30.507122"
+  },
+  "radiology": {
+    "status": "done",
+    "rows": 4435075,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:46:25.099611"
+  },
+  "labs": {
+    "status": "done",
+    "rows": 51862407,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:46:58.244271"
+  },
+  "procedures": {
+    "status": "done",
+    "rows": 45979641,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:49:36.737152"
+  },
+  "ros": {
+    "status": "done",
+    "rows": 101903521,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T17:51:36.189852"
+  },
+  "vitals": {
+    "status": "done",
+    "rows": 173803382,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T18:02:42.980764"
+  },
+  "encounters": {
+    "status": "done",
+    "rows": 212669249,
+    "path": "exports/qc_opt_20260511_173934.csv",
+    "ts": "2026-05-11T18:02:47.394157"
+  }
+}

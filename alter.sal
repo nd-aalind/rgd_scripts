@@ -1,0 +1,1 @@
+delete from rgd_udm_silver.notes_part2 where psid = 3;

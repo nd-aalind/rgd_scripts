@@ -1,0 +1,7 @@
+run_timestamp,source,status,rows_inserted,elapsed_secs
+2026-05-07 22:48:29,clinicalprescription,done,372804,18.7
+2026-05-07 22:48:29,patientmedication,done,2648788,707.2
+2026-05-08 17:44:13,clinicalprescription,done,27135,9.0
+2026-05-08 17:44:13,patientmedication,done,286485,14.5
+2026-05-08 17:46:41,patientmedication,done,108430,7.8
+2026-05-08 17:46:41,clinicalprescription,done,26964,7.8

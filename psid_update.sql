@@ -1,0 +1,1 @@
+update rgd_udm_silver.notes_part2 set psid = 3 where left(ndid,8) = '10010003';

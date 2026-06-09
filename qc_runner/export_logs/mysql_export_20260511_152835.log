@@ -1,0 +1,56 @@
+[2026-05-11 15:28:35] [INFO] ============================================================
+[2026-05-11 15:28:35] [INFO] Optimized QC Runner
+[2026-05-11 15:28:35] [INFO]   Tables    : 10  |  Workers : 4
+[2026-05-11 15:28:35] [INFO]   BatchSize : 50,000  |  Output  : exports/qc_opt_20260511_152835.csv
+[2026-05-11 15:28:35] [WARNING]   Sample    : 100 rows per table
+[2026-05-11 15:28:35] [INFO] ============================================================
+[2026-05-11 15:28:37] [INFO] DB connection OK
+[2026-05-11 15:28:37] [INFO] Processing 10 table(s): allergies, diagnosis, encounters, examinations, labs, note, procedures, radiology, ros, vitals
+[2026-05-11 15:28:37] [INFO] [allergies] Starting
+[2026-05-11 15:28:37] [INFO] [diagnosis] Starting
+[2026-05-11 15:28:37] [INFO] [encounters] Starting
+[2026-05-11 15:28:37] [INFO] [examinations] Starting
+[2026-05-11 15:28:39] [INFO] [encounters] Sample: LIMIT 100
+[2026-05-11 15:28:40] [INFO] [examinations] Sample: LIMIT 100
+[2026-05-11 15:28:40] [INFO] [diagnosis] Sample: LIMIT 100
+[2026-05-11 15:28:40] [INFO] [allergies] Sample: LIMIT 100
+[2026-05-11 15:28:40] [INFO] [encounters] Done — 100 rows, 42 columns (2.7s)
+[2026-05-11 15:28:40] [INFO] [labs] Starting
+[2026-05-11 15:28:40] [ERROR] [examinations] FAILED: (1146, "Table 'rgd_udm_silver.examinations' doesn't exist") (3.0s)
+[2026-05-11 15:28:40] [INFO] [note] Starting
+[2026-05-11 15:28:40] [INFO] [diagnosis] Done — 100 rows, 40 columns (3.3s)
+[2026-05-11 15:28:40] [INFO] [procedures] Starting
+[2026-05-11 15:28:40] [INFO] [allergies] Done — 100 rows, 26 columns (3.3s)
+[2026-05-11 15:28:40] [INFO] [radiology] Starting
+[2026-05-11 15:28:42] [INFO] [labs] Sample: LIMIT 100
+[2026-05-11 15:28:43] [INFO] [note] Sample: LIMIT 100
+[2026-05-11 15:28:43] [ERROR] [note] FAILED: (1146, "Table 'rgd_udm_silver.note' doesn't exist") (3.1s)
+[2026-05-11 15:28:43] [INFO] [ros] Starting
+[2026-05-11 15:28:43] [INFO] [procedures] Sample: LIMIT 100
+[2026-05-11 15:28:43] [INFO] [radiology] Sample: LIMIT 100
+[2026-05-11 15:28:43] [INFO] [labs] Done — 100 rows, 49 columns (3.4s)
+[2026-05-11 15:28:43] [INFO] [vitals] Starting
+[2026-05-11 15:28:44] [INFO] [radiology] Done — 100 rows, 46 columns (3.4s)
+[2026-05-11 15:28:44] [INFO] [procedures] Done — 100 rows, 43 columns (3.7s)
+[2026-05-11 15:28:46] [INFO] [ros] Sample: LIMIT 100
+[2026-05-11 15:28:46] [INFO] [vitals] Sample: LIMIT 100
+[2026-05-11 15:28:46] [INFO] [ros] Done — 100 rows, 19 columns (3.4s)
+[2026-05-11 15:28:46] [INFO] [vitals] Done — 100 rows, 22 columns (3.4s)
+[2026-05-11 15:28:46] [INFO] ============================================================
+[2026-05-11 15:28:46] [INFO]   [DONE] allergies                                       100 rows  (3.3s)
+[2026-05-11 15:28:46] [INFO]   [DONE] diagnosis                                       100 rows  (3.3s)
+[2026-05-11 15:28:46] [INFO]   [DONE] encounters                                      100 rows  (2.7s)
+[2026-05-11 15:28:46] [INFO]   [FAIL] examinations                                      0 rows  (3.0s)
+[2026-05-11 15:28:46] [INFO]   [DONE] labs                                            100 rows  (3.4s)
+[2026-05-11 15:28:46] [INFO]   [FAIL] note                                              0 rows  (3.1s)
+[2026-05-11 15:28:46] [INFO]   [DONE] procedures                                      100 rows  (3.7s)
+[2026-05-11 15:28:46] [INFO]   [DONE] radiology                                       100 rows  (3.4s)
+[2026-05-11 15:28:46] [INFO]   [DONE] ros                                             100 rows  (3.4s)
+[2026-05-11 15:28:46] [INFO]   [DONE] vitals                                          100 rows  (3.4s)
+[2026-05-11 15:28:46] [INFO] 
+  Done: 8  (skipped: 0)  Failed: 2
+[2026-05-11 15:28:46] [INFO]   Output: exports/qc_opt_20260511_152835.csv
+[2026-05-11 15:28:46] [INFO] ============================================================
+[2026-05-11 15:28:46] [ERROR] Failed tables:
+[2026-05-11 15:28:46] [ERROR]   examinations: FAILED: (1146, "Table 'rgd_udm_silver.examinations' doesn't exist")
+[2026-05-11 15:28:46] [ERROR]   note: FAILED: (1146, "Table 'rgd_udm_silver.note' doesn't exist")

@@ -1,0 +1,1 @@
+create table staging.vital_rgd_bkp as select * from rgd_udm_silver.vitals;

@@ -1,0 +1,81 @@
+[2026-05-11 15:36:51] [INFO] ============================================================
+[2026-05-11 15:36:51] [INFO] Optimized QC Runner
+[2026-05-11 15:36:51] [INFO]   Tables    : 10  |  Workers : 4
+[2026-05-11 15:36:51] [INFO]   BatchSize : 50,000  |  Output  : exports/qc_opt_full_20260511_153651.csv
+[2026-05-11 15:36:51] [INFO] ============================================================
+[2026-05-11 15:36:52] [INFO] DB connection OK
+[2026-05-11 15:36:52] [INFO] Processing 10 table(s): allergies, diagnosis, encounters, examination, labs, note, procedures, radiology, ros, vitals
+[2026-05-11 15:36:52] [INFO] [allergies] Starting
+[2026-05-11 15:36:52] [INFO] [diagnosis] Starting
+[2026-05-11 15:36:52] [INFO] [examination] Starting
+[2026-05-11 15:36:52] [INFO] [encounters] Starting
+[2026-05-11 15:36:55] [WARNING] [diagnosis] No keyset column — streaming full scan in chunks of 50,000
+[2026-05-11 15:36:55] [WARNING] [examination] No keyset column — streaming full scan in chunks of 50,000
+[2026-05-11 15:36:56] [WARNING] [allergies] No keyset column — streaming full scan in chunks of 50,000
+[2026-05-11 15:37:09] [INFO] [examination] Chunk 1: 50,000 rows (total so far: 50,000)
+[2026-05-11 15:37:11] [INFO] [diagnosis] Chunk 1: 50,000 rows (total so far: 50,000)
+[2026-05-11 15:37:12] [INFO] [examination] Chunk 2: 50,000 rows (total so far: 100,000)
+[2026-05-11 15:37:14] [INFO] [examination] Chunk 3: 50,000 rows (total so far: 150,000)
+[2026-05-11 15:37:16] [INFO] [examination] Chunk 4: 50,000 rows (total so far: 200,000)
+[2026-05-11 15:37:17] [INFO] [allergies] Chunk 1: 50,000 rows (total so far: 50,000)
+[2026-05-11 15:37:20] [INFO] [examination] Chunk 5: 50,000 rows (total so far: 250,000)
+[2026-05-11 15:37:20] [INFO] [diagnosis] Chunk 2: 50,000 rows (total so far: 100,000)
+[2026-05-11 15:37:22] [INFO] [allergies] Chunk 2: 50,000 rows (total so far: 100,000)
+[2026-05-11 15:37:23] [INFO] [examination] Chunk 6: 50,000 rows (total so far: 300,000)
+[2026-05-11 15:37:24] [INFO] [allergies] Chunk 3: 50,000 rows (total so far: 150,000)
+[2026-05-11 15:37:26] [INFO] [examination] Chunk 7: 50,000 rows (total so far: 350,000)
+[2026-05-11 15:37:26] [INFO] [allergies] Chunk 4: 50,000 rows (total so far: 200,000)
+[2026-05-11 15:37:29] [INFO] [allergies] Chunk 5: 50,000 rows (total so far: 250,000)
+[2026-05-11 15:37:30] [INFO] [examination] Chunk 8: 50,000 rows (total so far: 400,000)
+[2026-05-11 15:37:31] [INFO] [allergies] Chunk 6: 50,000 rows (total so far: 300,000)
+[2026-05-11 15:37:31] [INFO] [diagnosis] Chunk 3: 50,000 rows (total so far: 150,000)
+[2026-05-11 15:37:32] [INFO] [allergies] Chunk 7: 50,000 rows (total so far: 350,000)
+[2026-05-11 15:37:35] [INFO] [allergies] Chunk 8: 50,000 rows (total so far: 400,000)
+[2026-05-11 15:37:36] [INFO] [examination] Chunk 9: 50,000 rows (total so far: 450,000)
+[2026-05-11 15:37:38] [INFO] [allergies] Chunk 9: 50,000 rows (total so far: 450,000)
+[2026-05-11 15:37:40] [INFO] [allergies] Chunk 10: 50,000 rows (total so far: 500,000)
+[2026-05-11 15:37:43] [INFO] [examination] Chunk 10: 50,000 rows (total so far: 500,000)
+[2026-05-11 15:37:44] [INFO] [allergies] Chunk 11: 50,000 rows (total so far: 550,000)
+[2026-05-11 15:37:46] [INFO] [allergies] Chunk 12: 50,000 rows (total so far: 600,000)
+[2026-05-11 15:37:51] [INFO] [allergies] Chunk 13: 50,000 rows (total so far: 650,000)
+[2026-05-11 15:37:51] [INFO] [diagnosis] Chunk 4: 50,000 rows (total so far: 200,000)
+[2026-05-11 15:37:53] [INFO] [examination] Chunk 11: 50,000 rows (total so far: 550,000)
+[2026-05-11 15:37:55] [INFO] [allergies] Chunk 14: 50,000 rows (total so far: 700,000)
+[2026-05-11 15:37:59] [INFO] [allergies] Chunk 15: 50,000 rows (total so far: 750,000)
+[2026-05-11 15:38:05] [INFO] [allergies] Chunk 16: 50,000 rows (total so far: 800,000)
+[2026-05-11 15:38:05] [INFO] [examination] Chunk 12: 50,000 rows (total so far: 600,000)
+[2026-05-11 15:38:09] [INFO] [allergies] Chunk 17: 50,000 rows (total so far: 850,000)
+[2026-05-11 15:38:11] [INFO] [examination] Chunk 13: 50,000 rows (total so far: 650,000)
+[2026-05-11 15:38:17] [INFO] [examination] Chunk 14: 50,000 rows (total so far: 700,000)
+[2026-05-11 15:38:17] [INFO] [allergies] Chunk 18: 50,000 rows (total so far: 900,000)
+[2026-05-11 15:38:18] [INFO] [diagnosis] Chunk 5: 50,000 rows (total so far: 250,000)
+[2026-05-11 15:38:25] [INFO] [examination] Chunk 15: 50,000 rows (total so far: 750,000)
+[2026-05-11 15:38:25] [INFO] [allergies] Chunk 19: 50,000 rows (total so far: 950,000)
+[2026-05-11 15:38:32] [INFO] [allergies] Chunk 20: 50,000 rows (total so far: 1,000,000)
+[2026-05-11 15:38:36] [INFO] [examination] Chunk 16: 50,000 rows (total so far: 800,000)
+[2026-05-11 15:38:39] [INFO] [allergies] Chunk 21: 50,000 rows (total so far: 1,050,000)
+[2026-05-11 15:38:42] [INFO] [diagnosis] Chunk 6: 50,000 rows (total so far: 300,000)
+[2026-05-11 15:38:46] [INFO] [allergies] Chunk 22: 50,000 rows (total so far: 1,100,000)
+[2026-05-11 15:38:51] [INFO] [examination] Chunk 17: 50,000 rows (total so far: 850,000)
+[2026-05-11 15:38:55] [INFO] [allergies] Chunk 23: 50,000 rows (total so far: 1,150,000)
+[2026-05-11 15:39:03] [INFO] [allergies] Chunk 24: 50,000 rows (total so far: 1,200,000)
+[2026-05-11 15:39:05] [INFO] [diagnosis] Chunk 7: 50,000 rows (total so far: 350,000)
+[2026-05-11 15:39:11] [INFO] [allergies] Chunk 25: 50,000 rows (total so far: 1,250,000)
+[2026-05-11 15:39:17] [INFO] [examination] Chunk 18: 50,000 rows (total so far: 900,000)
+[2026-05-11 15:39:17] [INFO] [diagnosis] Chunk 8: 50,000 rows (total so far: 400,000)
+[2026-05-11 15:39:19] [INFO] [allergies] Chunk 26: 50,000 rows (total so far: 1,300,000)
+[2026-05-11 15:39:29] [INFO] [allergies] Chunk 27: 50,000 rows (total so far: 1,350,000)
+[2026-05-11 15:39:30] [INFO] [diagnosis] Chunk 9: 50,000 rows (total so far: 450,000)
+[2026-05-11 15:39:37] [INFO] [allergies] Chunk 28: 50,000 rows (total so far: 1,400,000)
+[2026-05-11 15:39:40] [INFO] [examination] Chunk 19: 50,000 rows (total so far: 950,000)
+[2026-05-11 15:39:49] [INFO] [diagnosis] Chunk 10: 50,000 rows (total so far: 500,000)
+[2026-05-11 15:39:51] [INFO] [allergies] Chunk 29: 50,000 rows (total so far: 1,450,000)
+[2026-05-11 15:39:56] [INFO] [encounters] Keyset col=`udm_inc_id`, 4254 batch(es) × 50,000
+[2026-05-11 15:40:06] [INFO] [examination] Chunk 20: 50,000 rows (total so far: 1,000,000)
+[2026-05-11 15:40:08] [INFO] [allergies] Chunk 30: 50,000 rows (total so far: 1,500,000)
+[2026-05-11 15:40:17] [INFO] [diagnosis] Chunk 11: 50,000 rows (total so far: 550,000)
+[2026-05-11 15:40:23] [INFO] [allergies] Chunk 31: 50,000 rows (total so far: 1,550,000)
+[2026-05-11 15:40:33] [INFO] [allergies] Chunk 32: 50,000 rows (total so far: 1,600,000)
+[2026-05-11 15:40:38] [INFO] [allergies] Chunk 33: 50,000 rows (total so far: 1,650,000)
+[2026-05-11 15:40:41] [INFO] [examination] Chunk 21: 50,000 rows (total so far: 1,050,000)
+[2026-05-11 15:40:41] [INFO] [allergies] Chunk 34: 50,000 rows (total so far: 1,700,000)

@@ -1,0 +1,17 @@
+[2026-05-11 15:33:26] [INFO] ============================================================
+[2026-05-11 15:33:26] [INFO] Optimized QC Runner
+[2026-05-11 15:33:26] [INFO]   Tables    : 10  |  Workers : 4
+[2026-05-11 15:33:26] [INFO]   BatchSize : 50,000  |  Output  : exports/qc_opt_full_20260511_153326.csv
+[2026-05-11 15:33:26] [INFO] ============================================================
+[2026-05-11 15:33:27] [INFO] DB connection OK
+[2026-05-11 15:33:27] [INFO] Processing 10 table(s): allergies, diagnosis, encounters, examinations, labs, note, procedures, radiology, ros, vitals
+[2026-05-11 15:33:27] [INFO] [allergies] Starting
+[2026-05-11 15:33:27] [INFO] [diagnosis] Starting
+[2026-05-11 15:33:27] [INFO] [encounters] Starting
+[2026-05-11 15:33:27] [INFO] [examinations] Starting
+[2026-05-11 15:33:30] [WARNING] [examinations] No keyset column — full scan in chunks of 50,000
+[2026-05-11 15:33:30] [WARNING] [allergies] No keyset column — full scan in chunks of 50,000
+[2026-05-11 15:33:30] [WARNING] [diagnosis] No keyset column — full scan in chunks of 50,000
+[2026-05-11 15:33:31] [ERROR] [examinations] FAILED: (1146, "Table 'rgd_udm_silver.examinations' doesn't exist") (3.1s)
+[2026-05-11 15:33:31] [INFO] [labs] Starting
+[2026-05-11 15:33:33] [WARNING] [labs] No keyset column — full scan in chunks of 50,000

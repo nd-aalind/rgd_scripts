@@ -3,12 +3,13 @@
 Fill Rate Report Generator — rgd_udm_silver
 ============================================
 
-For every column in every table defined in SOURCES, computes:
+For every column in every table (auto-discovered from information_schema), computes:
     schema_name | table_name | column_name | total_count | null_records | fill_rate_pct
 
 A NULL/empty record is any row where the column IS NULL OR = ''.
 
 Strategy (optimized):
+  - Columns discovered dynamically from information_schema — no hardcoding needed
   - One aggregate SELECT per table → single full scan, all columns at once
     (avoids N separate scans for N columns — massively cheaper on large tables)
   - Tables processed in parallel via ThreadPoolExecutor (MAX_WORKERS)
@@ -20,9 +21,10 @@ NOTE: Large tables will still require a full sequential scan. Approximate sizes:
     encounters ~240M, notes_part1 ~142M. Run during off-peak hours.
 
 Usage:
-    python fillrates.py
-    python fillrates.py --workers 6        # increase parallelism
-    python fillrates.py --reset            # drop checkpoint, recompute all tables
+    python fillrates.py                                    # all tables in SOURCE_TABLES
+    python fillrates.py --tables patients encounters       # specific tables only
+    python fillrates.py --workers 6                        # increase parallelism
+    python fillrates.py --reset                            # drop checkpoint, recompute all
 """
 
 import argparse
@@ -48,193 +50,14 @@ DB_CONFIG = {
 
 MAX_WORKERS      = 4                                    # tables computed in parallel
 SOURCE_SCHEMA    = "rgd_udm_silver"
-REPORT_TABLE     = "staging.fill_rate_report_3"
-CHECKPOINT_TABLE = "staging.etl_checkpoint_fillrates_v3"
+REPORT_TABLE     = "staging.fill_rate_report_4"
+CHECKPOINT_TABLE = "staging.etl_checkpoint_fillrates_v4"
 
 # ── Source definitions ────────────────────────────────────────────────────────
-# Each entry: table name + ordered list of columns (from DDL in rgd_fill_rates.sql)
-SOURCES = [
-    {
-        "table": "patients",
-        "columns": [
-            "ndid", "clinicid", "registration_date", "dob", "gender",
-            "pat_language", "pat_city", "pat_state", "pat_country", "pat_zip",
-            "pat_race_code", "pat_race", "pat_ethnicity_code", "pat_ethnicity",
-            "pat_marital_status", "pat_deceased_status", "deceased_date",
-            "deceased_reason", "primary_provider_id", "ehr_active_flag",
-            "pat_insurance", "pcp_name", "rendering_provider_id",
-            "referring_provider_id", "disability_status", "residence_type",
-            "created_datetime", "created_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "referral_flag", "referral_from", "test_pat_flag",
-            "udm_inc_id", "nd_extracted_date", "gender_hl7_std", "gender_CDISC_std",
-            "gender_OMOP_std", "gender_OMOP_concept_id", "pat_race_code_std",
-            "pat_race_std", "pat_ethnicity_code_std", "pat_ethnicity_std",
-            "pat_deceased_status_std", "enc_date_proxy", "pat_marital_status_std",
-        ],
-    },
-    {
-        "table": "encounters",
-        "columns": [
-            "eid", "ndid", "enc_date", "enc_end_date", "enc_start_time",
-            "enc_end_time", "encounter_category", "enc_type", "enc_reason",
-            "enc_appt_id", "enc_department", "doc_speciality", "enc_facility_id",
-            "enc_location", "enc_status", "enc_document_flg", "enc_document_id",
-            "pregnancy_flg", "inpatient_flg", "provider_id",
-            "supervising_provider_id", "primary_provider_id", "referral_flg",
-            "referring_provider_id", "referring_provider_name",
-            "referring_provider_npi", "locked", "provider_name", "care_team",
-            "payer", "referral_reason", "visit_type", "rendering_provider_name",
-            "created_datetime", "created_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "diagnosis",
-        "columns": [
-            "diag_id", "ndid", "eid", "enc_date", "encounter_end_date",
-            "diag_date", "diag_code", "diag_desc", "diag_coding_system",
-            "diag_code_stripped", "primary_diagnosis_flag", "parent_diagnosis_code",
-            "parent_diagnosis_desc", "icd_codeset", "icd_codeset_desc",
-            "icd_codeset_group", "icd_codeset_system", "snomed_code",
-            "diag_severity", "diag_status", "diag_end_date",
-            "provisional_diag_flag", "differential_diag_flag", "comments_notes",
-            "diag_risk", "specify", "nd_extracted_date", "created_datetime",
-            "created_by", "ehr_source_name", "source_path", "data_type", "psid",
-            "udm_inc_id", "enc_date_proxy", "icd10_desc_std", "icd9_desc_std",
-            "diag_coding_system_std", "primary_diagnosis_flag_std", "diag_desc_std",
-        ],
-    },
-    {
-        "table": "procedures",
-        "columns": [
-            "proc_id", "ndid", "eid", "encounter_date", "proc_start_date",
-            "proc_last_date", "proc_category", "proc_code", "proc_name",
-            "proc_coding_system", "proc_units", "proc_description", "proc_notes",
-            "anesthesia_flag", "anesthesia_detail_id", "ordering_provider_id",
-            "ordering_provider_name", "ordering_provider_npi",
-            "rendering_provider_id", "rendering_provider_name",
-            "rendering_provider_npi", "referring_provider_id",
-            "referring_provider_name", "referring_provider_npi",
-            "place_of_service_Id", "place_of_service_desc", "order_date",
-            "Diagnosis_Indication", "nd_extracted_date", "created_datetime",
-            "created_by", "ehr_source_name", "source_path", "data_type", "psid",
-            "incremental_id", "udm_inc_id", "proc_code_std",
-            "proc_coding_system_std", "enc_date_proxy", "proc_modifier_std",
-            "proc_name_std", "proc_description_std",
-        ],
-    },
-    {
-        "table": "medications_part1",
-        "columns": [
-            "source", "med_id", "ndid", "eid", "enc_date", "written_date",
-            "med_administered_datetime", "doc_orderdatetime", "med_start_date",
-            "med_end_date", "med_createddatetime", "doc_createddatetime",
-            "last_dispensed_date", "sample_expiration_date",
-            "administer_expiration_date", "earliest_fill_date", "med_code",
-            "med_name", "med_coding_system", "med_status", "med_status_flag",
-            "med_indication", "med_formulation", "med_route", "med_strength",
-            "med_strength_unit", "med_frequency", "med_pb_qty", "med_days_supply",
-            "med_refills", "med_directions", "fill_date", "med_fill_type",
-            "discont_date", "discont_reason", "created_datetime", "created_by",
-            "updated_datetime", "updated_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "medications_part2",
-        "columns": [
-            "source", "med_id", "ndid", "eid", "enc_date", "written_date",
-            "med_administered_datetime", "doc_orderdatetime", "med_start_date",
-            "med_end_date", "med_createddatetime", "doc_createddatetime",
-            "last_dispensed_date", "sample_expiration_date",
-            "administer_expiration_date", "earliest_fill_date", "med_code",
-            "med_name", "med_coding_system", "med_status", "med_status_flag",
-            "med_indication", "med_formulation", "med_route", "med_strength",
-            "med_strength_unit", "med_frequency", "med_pb_qty", "med_days_supply",
-            "med_refills", "med_directions", "fill_date", "med_fill_type",
-            "discont_date", "discont_reason", "created_datetime", "created_by",
-            "updated_datetime", "updated_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "ros",
-        "columns": [
-            "ndid", "eid", "enc_start_date", "ros_date", "ros_name",
-            "ros_category", "ros_option", "ros_notes", "created_datetime",
-            "created_by", "ehr_source_name", "source_path", "data_type", "psid",
-            "ros_id", "ros_parameter", "nd_extracted_date", "udm_inc_id",
-            "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "examination",
-        "columns": [
-            "examid", "ndid", "eid", "enc_start_date", "exam_date",
-            "exam_category", "exam_name", "exam_findings", "created_datetime",
-            "created_by", "ehr_source_name", "source_path", "data_type", "psid",
-            "finding_type", "exam_parameters", "nd_extracted_date", "udm_inc_id",
-            "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "notes_part1",
-        "columns": [
-            "ndid", "eid", "enc_start_date", "note", "note_type", "note_source",
-            "created_datetime", "created_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "notes_part2",
-        "columns": [
-            "ndid", "eid", "enc_start_date", "note", "note_type", "note_source",
-            "created_datetime", "created_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "enc_date_proxy", "udm_inc_id",
-        ],
-    },
-    {
-        "table": "vitals",
-        "columns": [
-            "vital_id", "ndid", "eid", "vital_code", "vital_name",
-            "vital_coding_system", "vital_date", "vital_time", "vital_unit",
-            "vital_range", "vital_result", "created_datetime", "created_by",
-            "updated_datetime", "updated_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "labs",
-        "columns": [
-            "result_id", "ndid", "eid", "enc_date", "lab_order_date",
-            "sample_collection_date", "result_date", "result_name",
-            "result_parameter", "result_code", "result_coding_system",
-            "result_value", "result_unit", "result_range", "result_value_type",
-            "ordering_provider_name", "order_id", "test_performing_lab_id",
-            "test_performing_lab_name", "normalcy_flag", "result_status",
-            "report_id", "report_status", "report_description", "specimen_source",
-            "specimen_number", "internal_note", "note_to_patient", "facility",
-            "interpretation", "received", "highpriority", "cancelled",
-            "futureorder", "inhouse", "ordered_fasting",
-            "do_not_publish_to_patient", "interfacestatus", "created_datetime",
-            "created_by", "ehr_source_name", "source_path", "data_type", "psid",
-            "nd_extracted_date", "Result_Document_ID", "Report_date",
-            "udm_inc_id", "enc_date_proxy",
-        ],
-    },
-    {
-        "table": "radiology",
-        "columns": [
-            "result_id", "ndid", "eid", "enc_date", "img_date", "study_name",
-            "modality", "img_status", "img_report_text", "img_finding",
-            "report_id", "report_date", "report_status", "img_reason",
-            "order_date", "order_status", "order_prescription", "provider_id",
-            "provider_name", "provider_npi", "internal_notes", "note_to_patient",
-            "facility", "interpretation", "result", "report_text",
-            "created_datetime", "created_by", "ehr_source_name", "source_path",
-            "data_type", "psid", "nd_extracted_date", "udm_inc_id", "enc_date_proxy",
-        ],
-    },
+# Default tables to process when --tables is not passed.
+# Columns are discovered dynamically from information_schema at runtime.
+SOURCE_TABLES = [
+    "problemlist","pastmedicalhistory","familyhistory","socialhistory","surgicalhistory","appointment","provider","referrals"
 ]
 
 
@@ -383,18 +206,15 @@ FROM `{SOURCE_SCHEMA}`.`{table}`
 
 # ── Worker ────────────────────────────────────────────────────────────────────
 
-def run_source(source, pbar):
+def run_source(table, pbar):
     """Compute fill rates for one table, write results, update checkpoint."""
-    table   = source["table"]
-    columns = source["columns"]
-    key     = f"{SOURCE_SCHEMA}.{table}"
-
+    key  = f"{SOURCE_SCHEMA}.{table}"
     conn = get_connection()
 
     if is_done(conn, key):
         conn.close()
         pbar.update(1)
-        return {"table": table, "status": "skipped", "cols": len(columns), "secs": 0}
+        return {"table": table, "status": "skipped", "cols": 0, "secs": 0}
 
     mark(conn, key, "running")
     t0 = time.time()
@@ -402,9 +222,12 @@ def run_source(source, pbar):
     try:
         cur = conn.cursor()
 
-        # ── Column types (instant — no scan) ─────────────────────────
-        col_types   = get_column_types(cur, table)
-        string_cols = [c for c in columns if col_types.get(c, "varchar") in _STRING_TYPES]
+        # ── Discover columns dynamically (instant — no scan) ──────────
+        col_types = get_column_types(cur, table)
+        if not col_types:
+            raise ValueError(f"Table '{table}' not found in {SOURCE_SCHEMA} or has no columns")
+        columns     = list(col_types.keys())
+        string_cols = [c for c in columns if col_types[c] in _STRING_TYPES]
 
         # ── Approximate row count (instant — no scan) ─────────────────
         approx_rows = get_approx_row_count(cur, table)
@@ -478,22 +301,26 @@ def run_source(source, pbar):
 
 def main():
     parser = argparse.ArgumentParser(description="Fill rate report — rgd_udm_silver")
+    parser.add_argument("--tables", nargs="+", metavar="TABLE",
+                        help="One or more table names to process (default: all SOURCE_TABLES)")
     parser.add_argument("--workers", type=int, default=MAX_WORKERS,
                         help=f"Parallel workers (default: {MAX_WORKERS})")
     parser.add_argument("--reset", action="store_true",
                         help="Drop checkpoint table and recompute all tables from scratch")
     args = parser.parse_args()
 
-    total_cols = sum(len(s["columns"]) for s in SOURCES)
+    tables = args.tables if args.tables else SOURCE_TABLES
 
     print(f"\n{'='*70}")
     print(f"  Fill Rate Report — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  schema     : {SOURCE_SCHEMA}")
-    print(f"  tables     : {len(SOURCES)}")
-    print(f"  columns    : {total_cols}")
+    print(f"  tables     : {len(tables)}")
+    print(f"  columns    : auto-discovered from information_schema")
     print(f"  report     : {REPORT_TABLE}")
     print(f"  checkpoint : {CHECKPOINT_TABLE}")
     print(f"  workers    : {args.workers}")
+    if args.tables:
+        print(f"  filter     : {', '.join(tables)}")
     if args.reset:
         print(f"  mode       : RESET — all tables will be recomputed")
     print(f"{'='*70}\n")
@@ -503,11 +330,11 @@ def main():
     print("  ready\n")
 
     results = []
-    with tqdm(total=len(SOURCES), desc="Tables", unit="table") as pbar:
+    with tqdm(total=len(tables), desc="Tables", unit="table") as pbar:
         with ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = {
-                pool.submit(run_source, src, pbar): src
-                for src in SOURCES
+                pool.submit(run_source, tbl, pbar): tbl
+                for tbl in tables
             }
             for future in as_completed(futures):
                 results.append(future.result())

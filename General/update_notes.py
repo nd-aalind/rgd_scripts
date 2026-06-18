@@ -43,13 +43,13 @@ DB_CONFIG = {
 BATCH_SIZE = 50_000
 
 # ── Change these to target a different table/schema/psid ─────────────
-TARGET_TABLE = "rgd_udm_silver.notes_part1"
+TARGET_TABLE = "rgd_udm_silver.notes_part1_lilly"
 CE_SCHEMA    = "tng_athena_one"
 PSID         = 2
 
-STAGING_CE       = f"staging.upd_notes_ce_v3_{CE_SCHEMA}"
-STAGING_TABLE    = f"staging.tmp_upd_notes_eid_v3_{CE_SCHEMA}"
-CHECKPOINT_TABLE = f"staging.etl_checkpoint_upd_notes_v4_{CE_SCHEMA}"
+STAGING_CE       = f"staging.upd_notes_ce_v4_{CE_SCHEMA}"
+STAGING_TABLE    = f"staging.tmp_upd_notes_eid_v4_{CE_SCHEMA}"
+CHECKPOINT_TABLE = f"staging.etl_checkpoint_upd_notes_v5_{CE_SCHEMA}"
 CHECKPOINT_KEY   = "notes_part1.enc_start_date.update"
 
 BATCH_KEY = "eid"
@@ -61,7 +61,7 @@ def build_batch_update(pk_lo, pk_hi):
     return f"""
 UPDATE {TARGET_TABLE} a
 JOIN {STAGING_CE} b ON b.clinicalencounterid = a.eid
-SET a.enc_start_date = b.ENCOUNTERDATE
+SET a.enc_start_date = b.enc_start_date
 WHERE a.enc_start_date IS NULL
   AND a.psid = {PSID}
   AND a.{BATCH_KEY} >= {pk_lo} AND a.{BATCH_KEY} < {pk_hi}
@@ -157,7 +157,20 @@ def setup_tables():
     if not _table_exists(cur, STAGING_CE):
         cur.execute(f"""
             CREATE TABLE {STAGING_CE} AS
-            SELECT clinicalencounterid, ENCOUNTERDATE
+            SELECT
+                clinicalencounterid,
+                CASE
+                    WHEN ENCOUNTERDATE IS NULL OR ENCOUNTERDATE IN ('', 'None') THEN NULL
+                    WHEN ENCOUNTERDATE REGEXP '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}} [0-9]{{2}}:[0-9]{{2}}:[0-9]{{2}}$'
+                        THEN DATE(ENCOUNTERDATE)
+                    WHEN ENCOUNTERDATE REGEXP '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$'
+                        THEN STR_TO_DATE(ENCOUNTERDATE, '%Y-%m-%d')
+                    WHEN ENCOUNTERDATE REGEXP '^[0-9]{{2}}/[0-9]{{2}}/[0-9]{{4}}$'
+                        THEN STR_TO_DATE(ENCOUNTERDATE, '%m/%d/%Y')
+                    WHEN ENCOUNTERDATE REGEXP '^[0-9]{{2}}-[0-9]{{2}}-[0-9]{{4}}$'
+                        THEN STR_TO_DATE(ENCOUNTERDATE, '%m-%d-%Y')
+                    ELSE NULL
+                END AS enc_start_date
             FROM {CE_SCHEMA}.CLINICALENCOUNTER
         """)
         cur.execute(f"ALTER TABLE {STAGING_CE} ADD INDEX idx_ce (clinicalencounterid)")

@@ -13,10 +13,10 @@ except ImportError:
 
 # Database Configuration (from environment variables)
 DB_CONFIG = {
-    "user": os.getenv("DB_USER", "nd-root-mysql"),
-    "password": os.getenv("DB_PASSWORD", "kmsamd89undsd4"),
-    "host": os.getenv("DB_HOST", "172.16.2.42"),
-    "port": int(os.getenv("DB_PORT", 3306)),
+    "user": os.environ.get("DB_USER"),
+    "password": os.getenv("DB_PASSWORD", os.environ.get("DB_INTERNAL_PASSWORD")),
+    "host": os.getenv("DB_HOST", os.environ.get("DB_INTERNAL_HOST")),
+    "port": int(int(os.environ.get("DB_PORT", "3306"))),
     "database": os.getenv("DB_NAME", "rgd_udm_silver")
 }
 

@@ -38,13 +38,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_INTERNAL_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
+    "user":            os.environ.get("DB_INTERNAL_USER"),
+    "password":        os.environ.get("DB_INTERNAL_PASSWORD"),
     "database":        "rgd_udm_silver",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -168,7 +171,8 @@ SET
              AND (p.proc_name IS NULL OR TRIM(p.proc_name) = '') THEN NULL
         ELSE COALESCE(h.LONG_DESCRIPTION, t.DESCRIPTION, 'NS')
     END
-WHERE p.{BATCH_KEY} >= {pk_lo}
+WHERE p.proc_code_std IS NULL
+  AND p.{BATCH_KEY} >= {pk_lo}
   AND p.{BATCH_KEY} < {pk_hi}
 """
 
@@ -375,46 +379,37 @@ def setup_tables():
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_CPT}")
     print(f"    {cur.fetchone()[0]:,} rows")
 
-    # ── 3. PK staging — Pass 1: all rows ──────────────────────────────
-    print("  Creating PK staging for Pass 1 (all rows)...")
-    if not _table_exists(cur, STAGING_PK_PASS1):
-        cur.execute(f"""
-            CREATE TABLE {STAGING_PK_PASS1} AS
-            SELECT {BATCH_KEY}
-            FROM {TARGET_TABLE}
-            WHERE {BATCH_KEY} IS NOT NULL
-        """)
-        cur.execute(f"ALTER TABLE {STAGING_PK_PASS1} ADD INDEX idx_pk ({BATCH_KEY})")
+    # ── 3. PK staging — Pass 1: NULL proc_code_std rows (incremental)
+    print("  Creating PK staging for Pass 1 (NULL proc_code_std rows)...")
+    if _table_exists(cur, STAGING_PK_PASS1):
+        cur.execute(f"DROP TABLE {STAGING_PK_PASS1}")
         conn.commit()
-        print("    created")
-    else:
-        print("    already exists, reusing")
+    cur.execute(f"""
+        CREATE TABLE {STAGING_PK_PASS1} AS
+        SELECT {BATCH_KEY}
+        FROM {TARGET_TABLE}
+        WHERE proc_code_std IS NULL
+          AND {BATCH_KEY} IS NOT NULL
+    """)
+    cur.execute(f"ALTER TABLE {STAGING_PK_PASS1} ADD INDEX idx_pk ({BATCH_KEY})")
+    conn.commit()
+    print("    created")
     ranges_p1, total_p1 = _build_ranges(cur, STAGING_PK_PASS1)
     print(f"    {total_p1:,} rows → {len(ranges_p1)} batches")
 
-    # ── 4. PK staging — Pass 2: proc_code_std = 'NS' AND proc_name NOT NULL
-    print("  Creating PK staging for Pass 2 (proc_code_std = 'NS' rows)...")
-    if not _table_exists(cur, STAGING_PK_PASS2):
-        cur.execute(f"""
-            CREATE TABLE {STAGING_PK_PASS2} AS
-            SELECT {BATCH_KEY}
-            FROM {TARGET_TABLE}
-            WHERE proc_code_std = 'NS'
-              AND proc_name IS NOT NULL
-              AND {BATCH_KEY} IS NOT NULL
-        """)
-        cur.execute(f"ALTER TABLE {STAGING_PK_PASS2} ADD INDEX idx_pk ({BATCH_KEY})")
+    # ── 4. PK staging — Pass 2 is built AFTER Pass 1 (new NS rows not yet known)
+    # Drop any leftover from a previous run; rebuild_pass2_staging() fills it later.
+    if _table_exists(cur, STAGING_PK_PASS2):
+        cur.execute(f"DROP TABLE {STAGING_PK_PASS2}")
         conn.commit()
-        print("    created")
-    else:
-        print("    already exists, reusing")
-    ranges_p2, total_p2 = _build_ranges(cur, STAGING_PK_PASS2)
-    print(f"    {total_p2:,} rows → {len(ranges_p2)} batches")
+    ranges_p2 = []
 
     # ── 5. Checkpoint table ────────────────────────────────────────────
-    print("  Creating checkpoint table...")
+    # Always reset so each run processes whatever is currently NULL.
+    print("  Resetting checkpoint table...")
+    cur.execute(f"DROP TABLE IF EXISTS {CHECKPOINT_TABLE}")
     cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {CHECKPOINT_TABLE} (
+        CREATE TABLE {CHECKPOINT_TABLE} (
             source_key   VARCHAR(200) NOT NULL PRIMARY KEY,
             status       ENUM('running','done','failed') NOT NULL DEFAULT 'running',
             rows_updated BIGINT      DEFAULT 0,
@@ -433,6 +428,32 @@ def setup_tables():
         CHECKPOINT_PASS1: ranges_p1,
         CHECKPOINT_PASS2: ranges_p2,
     }
+
+
+# ── Pass 2 staging rebuild (called after Pass 1) ─────────────────────
+
+def rebuild_pass2_staging():
+    """Rebuild STAGING_PK_PASS2 after Pass 1 to capture newly-set 'NS' rows."""
+    conn = get_connection()
+    cur  = conn.cursor()
+    if _table_exists(cur, STAGING_PK_PASS2):
+        cur.execute(f"DROP TABLE {STAGING_PK_PASS2}")
+        conn.commit()
+    cur.execute(f"""
+        CREATE TABLE {STAGING_PK_PASS2} AS
+        SELECT {BATCH_KEY}
+        FROM {TARGET_TABLE}
+        WHERE proc_code_std = 'NS'
+          AND proc_name IS NOT NULL
+          AND {BATCH_KEY} IS NOT NULL
+    """)
+    cur.execute(f"ALTER TABLE {STAGING_PK_PASS2} ADD INDEX idx_pk ({BATCH_KEY})")
+    conn.commit()
+    ranges, total = _build_ranges(cur, STAGING_PK_PASS2)
+    cur.close()
+    conn.close()
+    print(f"  Pass 2 PK staging rebuilt: {total:,} rows → {len(ranges)} batches")
+    return ranges
 
 
 # ── Runner ─────────────────────────────────────────────────────────────
@@ -496,17 +517,27 @@ def main():
     all_ranges = setup_tables()
 
     passes = [
-        (CHECKPOINT_PASS1, "Pass 1 — HCPCS+CPT lookup (all rows)",              build_pass1),
-        (CHECKPOINT_PASS2, "Pass 2 — LIKE name fallback (NULL proc_code rows)", build_pass2),
+        (CHECKPOINT_PASS1, "Pass 1 — HCPCS+CPT lookup (NULL proc_code_std rows)", build_pass1),
+        (CHECKPOINT_PASS2, "Pass 2 — LIKE name fallback (proc_code_std='NS' rows)", build_pass2),
     ]
 
     results = {}
     any_failed = False
-    total_batches = sum(len(all_ranges.get(ck, [])) for ck, _, _ in passes)
+    # Pass 2 batches are unknown until Pass 1 completes — start with Pass 1 count only.
+    total_batches = len(all_ranges.get(CHECKPOINT_PASS1, []))
 
-    with tqdm(total=total_batches, desc="Overall", unit="batch") as pbar:
+    with tqdm(total=total_batches, desc="Overall", unit="batch", dynamic_ncols=True) as pbar:
         for ck, label, build_fn in passes:
             ranges = all_ranges.get(ck, [])
+
+            # After Pass 1 completes, rebuild Pass 2 staging to capture new NS rows.
+            if ck == CHECKPOINT_PASS2:
+                print(f"\n  Rebuilding Pass 2 PK staging (captures newly-set NS rows)...")
+                ranges = rebuild_pass2_staging()
+                all_ranges[CHECKPOINT_PASS2] = ranges
+                pbar.total += len(ranges)
+                pbar.refresh()
+
             if not ranges:
                 print(f"\n  [SKIP] {label} — no eligible rows")
                 continue

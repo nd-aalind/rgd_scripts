@@ -9,6 +9,9 @@ Usage:
     python dqcc_runner.py
 """
 
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 import pymysql
 import logging
 from datetime import datetime
@@ -20,10 +23,10 @@ from tqdm import tqdm
 # ─────────────────────────────────────────────────────────────────────────────
 
 DB_CONFIG = {
-    'host':            '172.16.2.42',
+    'host':            os.environ.get("DB_INTERNAL_HOST"),
     'port':            3306,
-    'user':            'nd-root-mysql',
-    'password':        'kmsamd89undsd4',
+    'user':            os.environ.get("DB_INTERNAL_USER"),
+    'password':        os.environ.get("DB_INTERNAL_PASSWORD"),
     'charset':         'utf8mb4',
     'autocommit':      False,
     'connect_timeout': 30,

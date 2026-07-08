@@ -33,13 +33,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        'udm_staging',
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -57,7 +60,7 @@ DEST_TABLE       = "udm_staging.familyhistory_final"
 STAGING_ENC      = f"staging.fh_ecw_enc_v2_{SOURCE_SCHEMA}"
 STAGING_ITEMS    = f"staging.fh_ecw_items_v2_{SOURCE_SCHEMA}"
 STAGING_PK       = f"staging.tmp_fh_ecw_staging_v2_{SOURCE_SCHEMA}"
-CHECKPOINT_TABLE = f"staging.etl_checkpoint_fh_ecw__v5_{SOURCE_SCHEMA}"
+CHECKPOINT_TABLE = f"staging.etl_checkpoint_fh_ecw__v7_{SOURCE_SCHEMA}"
 CHECKPOINT_KEY   = f"familyhistory1.ecw.insert.{SOURCE_SCHEMA}"
 
 BATCH_KEY = "encounterid"

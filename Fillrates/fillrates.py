@@ -34,30 +34,33 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
-    "database":        "rgd_udm_silver",
+    "user":            os.environ.get("DB_SUDHA_USER"),
+    "password":        os.environ.get("DB_SUDHA_PASSWORD"),
+    "database":        "mind",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
-    "read_timeout":    21600,   # 6 h — large aggregate scans can be slow
+    "read_timeout":    21600,
     "write_timeout":   21600,
 }
 
 MAX_WORKERS      = 4                                    # tables computed in parallel
 SOURCE_SCHEMA    = "rgd_udm_silver"
-REPORT_TABLE     = "staging.fill_rate_report_4"
-CHECKPOINT_TABLE = "staging.etl_checkpoint_fillrates_v4"
+REPORT_TABLE     = "staging.fill_rate_report_5"
+CHECKPOINT_TABLE = "staging.etl_checkpoint_fillrates_v5"
 
 # ── Source definitions ────────────────────────────────────────────────────────
 # Default tables to process when --tables is not passed.
 # Columns are discovered dynamically from information_schema at runtime.
 SOURCE_TABLES = [
-    "problemlist","pastmedicalhistory","familyhistory","socialhistory","surgicalhistory","appointment","provider","referrals"
+    "patients","procedures"
 ]
 
 

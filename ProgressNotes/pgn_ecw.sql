@@ -18,3 +18,4 @@ SELECT
 FROM dent.progressnotes_decryptfinal a
 LEFT JOIN dent.enc b 
     ON a.encounterID = b.encounterID;
+

@@ -58,13 +58,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_INTERNAL_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
+    "user":            os.environ.get("DB_INTERNAL_USER"),
+    "password":        os.environ.get("DB_INTERNAL_PASSWORD"),
     "database":        "rgd_udm_silver",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -87,19 +90,16 @@ STAGING_SNOMED        = f"staging.allergy_std_snomed_{_TABLE_SUFFIX}"        # s
 STAGING_SNOMED_TERMS  = f"staging.allergy_std_snomed_terms_{_TABLE_SUFFIX}"  # snomed_max + term + term_lower (full lookup)
 STAGING_RX_MAX        = f"staging.allergy_std_rx_max_{_TABLE_SUFFIX}"        # rx_max CTE
 STAGING_ALLERGEN_KEYS = f"staging.allergy_std_keys_{_TABLE_SUFFIX}"          # pre-computed TRIM/REPLACE/LOWER per row
-STAGING_REACTION_MAP  = f"staging.allergy_std_reaction_map_{_TABLE_SUFFIX}"  # comma-split map
 
 # Per-run PK staging tables
 STAGING_PK_PASS1 = f"staging.allergy_std_pk1_{_TABLE_SUFFIX}"
 STAGING_PK_PASS2 = f"staging.allergy_std_pk2_{_TABLE_SUFFIX}"
 STAGING_PK_PASS3 = f"staging.allergy_std_pk3_{_TABLE_SUFFIX}"
-STAGING_PK_PASS4 = f"staging.allergy_std_pk4_{_TABLE_SUFFIX}"
 
 CHECKPOINT_TABLE = f"staging.etl_checkpoint_allergy_std_f_{_TABLE_SUFFIX}"
 CHECKPOINT_PASS1 = f"allergies.std.pass1.allergen_code_lookup.{_TABLE_SUFFIX}"
 CHECKPOINT_PASS2 = f"allergies.std.pass2.reaction_code_lookup.{_TABLE_SUFFIX}"
 CHECKPOINT_PASS3 = f"allergies.std.pass3.reaction_name_fallback.{_TABLE_SUFFIX}"
-CHECKPOINT_PASS4 = f"allergies.std.pass4.reaction_code_split_insert.{_TABLE_SUFFIX}"
 
 BATCH_KEY = "udm_inc_id"
 
@@ -277,50 +277,6 @@ SET
 WHERE (a.allergy_reaction_name_std IS NULL OR a.allergy_reaction_name_std = 'NS')
   AND a.allergy_reaction_name IS NOT NULL
   AND a.allergy_reaction_name <> ''
-  AND a.{BATCH_KEY} >= {pk_lo}
-  AND a.{BATCH_KEY} <  {pk_hi}
-"""
-
-
-def build_pass4(pk_lo, pk_hi):
-    """
-    Pass 4: INSERT one new row per split SNOMED code for rows where
-    allergy_reaction_code contains comma-separated values.
-    Original rows are KEPT as-is. New rows get udm_inc_id = 0 (DEFAULT).
-    Uses pre-built reaction_map staging table joined back to allergies.
-    udm_inc_id is intentionally excluded — it defaults to 0.
-    """
-    return f"""
-INSERT INTO {TARGET_TABLE}
-    (allergy_id, ndid, eid,
-     allergy_onset_date, allergy_end_date, allergy_type,
-     allergen_name, allergen_code, allergen_coding_system,
-     allergy_reaction_name, allergy_reaction_code, allergy_reaction_coding_system,
-     allergy_severity, allergy_route, allergy_status,
-     created_datetime, created_by, updated_datetime, updated_by,
-     ehr_source_name, source_path, data_type, psid, nd_extracted_date,
-     allergen_name_std, allergen_code_std, allergen_coding_system_std,
-     allergy_reaction_name_std, allergy_reaction_code_std,
-     allergy_reaction_coding_system_std)
-
-SELECT
-    a.allergy_id, a.ndid, a.eid,
-    a.allergy_onset_date, a.allergy_end_date, a.allergy_type,
-    a.allergen_name, a.allergen_code, a.allergen_coding_system,
-    a.allergy_reaction_name, a.allergy_reaction_code, a.allergy_reaction_coding_system,
-    a.allergy_severity, a.allergy_route, a.allergy_status,
-    a.created_datetime, a.created_by, a.updated_datetime, a.updated_by,
-    a.ehr_source_name, a.source_path, a.data_type, a.psid, a.nd_extracted_date,
-    a.allergen_name_std, a.allergen_code_std, a.allergen_coding_system_std,
-    rm.allergy_reaction_name_std,
-    rm.allergy_reaction_code_std,
-    rm.allergy_reaction_coding_system_std
-FROM {TARGET_TABLE} a
-JOIN {STAGING_REACTION_MAP} rm
-    ON a.allergy_reaction_code = rm.original_code
-WHERE a.allergy_reaction_code LIKE '%,%'
-  AND a.allergy_reaction_code IS NOT NULL
-  AND a.allergy_reaction_code <> ''
   AND a.{BATCH_KEY} >= {pk_lo}
   AND a.{BATCH_KEY} <  {pk_hi}
 """
@@ -578,62 +534,7 @@ def setup_tables():
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_ALLERGEN_KEYS}")
     print(f"    {cur.fetchone()[0]:,} rows")
 
-    # ── 6. Reaction map lookup (JSON_TABLE comma-split codes -> SNOMED) ────────
-    #    Built at setup time (not deferred); reuses snomed_terms already materialized.
-    print("  Materializing allergy reaction code split map...")
-    if not _table_exists(cur, STAGING_REACTION_MAP):
-        # Increase group_concat_max_len before building the JSON_TABLE-based map
-        cur.execute("SET SESSION group_concat_max_len = 1073741824")
-        cur.execute(f"""
-            CREATE TABLE {STAGING_REACTION_MAP} (
-                original_code                      VARCHAR(500),
-                split_code                         VARCHAR(50),
-                allergy_reaction_code_std          VARCHAR(500),
-                allergy_reaction_name_std          VARCHAR(500),
-                allergy_reaction_coding_system_std VARCHAR(500)
-            )
-        """)
-        cur.execute(f"""
-            INSERT INTO {STAGING_REACTION_MAP}
-                (original_code, split_code,
-                 allergy_reaction_code_std, allergy_reaction_name_std,
-                 allergy_reaction_coding_system_std)
-            SELECT DISTINCT
-                sc.original_code,
-                sc.split_code,
-                COALESCE(st.conceptId, 'NS') AS allergy_reaction_code_std,
-                COALESCE(st.term,      'NS') AS allergy_reaction_name_std,
-                CASE
-                    WHEN st.conceptId IS NOT NULL THEN 'SNOMED'
-                    ELSE 'NS'
-                END AS allergy_reaction_coding_system_std
-            FROM (
-                SELECT
-                    a.allergy_reaction_code AS original_code,
-                    TRIM(j.code)            AS split_code
-                FROM {TARGET_TABLE} a,
-                JSON_TABLE(
-                    CONCAT('["', REPLACE(a.allergy_reaction_code, ',', '","'), '"]'),
-                    "$[*]" COLUMNS (
-                        code VARCHAR(50) PATH "$"
-                    )
-                ) j
-                WHERE a.allergy_reaction_code IS NOT NULL
-                  AND a.allergy_reaction_code <> ''
-                  AND a.allergy_reaction_code LIKE '%,%'
-            ) sc
-            LEFT JOIN {STAGING_SNOMED_TERMS} st
-                ON TRIM(sc.split_code) = st.conceptId
-        """)
-        _safe_add_index(cur, conn, STAGING_REACTION_MAP, "original_code", "idx_orig_code")
-        conn.commit()
-        print("    created")
-    else:
-        print("    already exists, reusing")
-    cur.execute(f"SELECT COUNT(*) FROM {STAGING_REACTION_MAP}")
-    print(f"    {cur.fetchone()[0]:,} rows")
-
-    # ── 7. PK staging — Pass 1: allergen_code IS NOT NULL AND <> '' ───────────
+    # ── 6. PK staging — Pass 1: allergen_code IS NOT NULL AND <> '' ────────────
     print("  Creating PK staging for Pass 1 (allergen_code rows)...")
     if not _table_exists(cur, STAGING_PK_PASS1):
         cur.execute(f"""
@@ -652,7 +553,7 @@ def setup_tables():
     ranges_p1, total_p1 = _build_ranges(cur, STAGING_PK_PASS1)
     print(f"    {total_p1:,} rows -> {len(ranges_p1)} batches")
 
-    # ── 8. PK staging — Pass 2: allergy_reaction_code IS NOT NULL AND <> '' ───
+    # ── 7. PK staging — Pass 2: allergy_reaction_code IS NOT NULL AND <> '' ───
     print("  Creating PK staging for Pass 2 (allergy_reaction_code rows)...")
     if not _table_exists(cur, STAGING_PK_PASS2):
         cur.execute(f"""
@@ -671,7 +572,7 @@ def setup_tables():
     ranges_p2, total_p2 = _build_ranges(cur, STAGING_PK_PASS2)
     print(f"    {total_p2:,} rows -> {len(ranges_p2)} batches")
 
-    # ── 9. PK staging — Pass 3: reaction name fallback rows ───────────────────
+    # ── 8. PK staging — Pass 3: reaction name fallback rows ──────────────────
     #    (allergy_reaction_name_std IS NULL OR = 'NS') AND allergy_reaction_name present
     print("  Creating PK staging for Pass 3 (reaction name fallback rows)...")
     if not _table_exists(cur, STAGING_PK_PASS3):
@@ -692,11 +593,7 @@ def setup_tables():
     ranges_p3, total_p3 = _build_ranges(cur, STAGING_PK_PASS3)
     print(f"    {total_p3:,} rows -> {len(ranges_p3)} batches")
 
-    # ── 10. Pass 4 PK staging — deferred until after Pass 3 ───────────────────
-    #    allergy_reaction_name_std must be finalized by Pass 2/3 first
-    ranges_p4 = []  # rebuilt in rebuild_pass4_staging()
-
-    # ── 11. Checkpoint table ───────────────────────────────────────────────────
+    # ── 9. Checkpoint table ────────────────────────────────────────────────────
     print("  Creating checkpoint table...")
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {CHECKPOINT_TABLE} (
@@ -718,36 +615,7 @@ def setup_tables():
         CHECKPOINT_PASS1: ranges_p1,
         CHECKPOINT_PASS2: ranges_p2,
         CHECKPOINT_PASS3: ranges_p3,
-        CHECKPOINT_PASS4: ranges_p4,
     }
-
-
-def rebuild_pass4_staging(all_ranges):
-    """Build Pass 4 PK staging after Pass 3 has finalized allergy_reaction_name_std."""
-    print("\n  Rebuilding Pass 4 PK staging (comma-separated reaction code rows)...")
-    conn = get_connection()
-    cur  = conn.cursor()
-    if not _table_exists(cur, STAGING_PK_PASS4):
-        cur.execute(f"""
-            CREATE TABLE {STAGING_PK_PASS4} AS
-            SELECT {BATCH_KEY}
-            FROM {TARGET_TABLE}
-            WHERE allergy_reaction_code LIKE '%,%'
-              AND allergy_reaction_code IS NOT NULL
-              AND allergy_reaction_code <> ''
-              AND {BATCH_KEY} IS NOT NULL
-        """)
-        cur.execute(f"ALTER TABLE {STAGING_PK_PASS4} ADD INDEX idx_pk ({BATCH_KEY})")
-        conn.commit()
-        print("    created")
-    else:
-        print("    already exists, reusing")
-    ranges_p4, total_p4 = _build_ranges(cur, STAGING_PK_PASS4)
-    print(f"    {total_p4:,} rows -> {len(ranges_p4)} batches")
-    cur.close()
-    conn.close()
-    all_ranges[CHECKPOINT_PASS4] = ranges_p4
-    return ranges_p4
 
 
 # ── Runner ─────────────────────────────────────────────────────────────
@@ -803,8 +671,7 @@ def main():
     print(f"  target     : {TARGET_TABLE}")
     print(f"  batch_key  : {BATCH_KEY}")
     print(f"  batch_size : {BATCH_SIZE:,}")
-    print(f"  passes     : 4  (allergen code lookup | reaction code lookup |")
-    print(f"                    reaction name fallback | reaction code split INSERT)")
+    print(f"  passes     : 3  (allergen code lookup | reaction code lookup | reaction name fallback)")
     print(f"{'='*70}\n", flush=True)
 
     print("  Connecting to database...")
@@ -814,19 +681,16 @@ def main():
     results    = {}
     any_failed = False
 
-    # ── Passes 1-3 (upfront) ──────────────────────────────────────────
-    passes_1_3 = [
+    all_passes = [
         (CHECKPOINT_PASS1, "Pass 1 — allergen code lookup UPDATE (allergen_code rows)",        build_pass1),
         (CHECKPOINT_PASS2, "Pass 2 — reaction code lookup UPDATE (allergy_reaction_code rows)", build_pass2),
         (CHECKPOINT_PASS3, "Pass 3 — reaction name fallback UPDATE (NULL/NS reaction rows)",   build_pass3),
     ]
 
-    total_batches_1_3 = sum(
-        len(all_ranges.get(ck, [])) for ck, _, _ in passes_1_3
-    )
+    total_batches = sum(len(all_ranges.get(ck, [])) for ck, _, _ in all_passes)
 
-    with tqdm(total=total_batches_1_3, desc="Passes 1-3", unit="batch") as pbar:
-        for ck, label, build_fn in passes_1_3:
+    with tqdm(total=total_batches, desc="Passes 1-3", unit="batch") as pbar:
+        for ck, label, build_fn in all_passes:
             ranges = all_ranges.get(ck, [])
             if not ranges:
                 print(f"\n  [SKIP] {label} — no eligible rows")
@@ -842,39 +706,11 @@ def main():
                 any_failed = True
                 break
 
-    # ── Pass 4 (deferred staging — built after Pass 3) ────────────────
-    if not any_failed:
-        _tmp_conn = get_connection()
-        _p4_done  = is_done(_tmp_conn, CHECKPOINT_PASS4)
-        _tmp_conn.close()
-
-        if _p4_done:
-            print(f"\n  [SKIP] Pass 4 — reaction code split INSERT — already done (checkpoint)")
-            results[CHECKPOINT_PASS4] = {"status": "skipped", "rows": 0, "secs": 0}
-        else:
-            ranges_p4 = rebuild_pass4_staging(all_ranges)
-            if not ranges_p4:
-                print(f"\n  [SKIP] Pass 4 — reaction code split INSERT — no comma-separated reaction code rows found")
-            else:
-                with tqdm(total=len(ranges_p4), desc="Pass 4", unit="batch") as pbar4:
-                    print(f"\n  Starting Pass 4 — reaction code split INSERT ({len(ranges_p4)} batches)...")
-                    result4 = run_pass(CHECKPOINT_PASS4, build_pass4, ranges_p4, pbar4)
-                    results[CHECKPOINT_PASS4] = result4
-                    if result4["status"].startswith("FAILED"):
-                        print(f"\n  FAILED at Pass 4: {result4['status']}")
-                        any_failed = True
-
     # ── Summary ───────────────────────────────────────────────────────
-    all_passes = [
-        (CHECKPOINT_PASS1, "Pass 1 — allergen code lookup UPDATE"),
-        (CHECKPOINT_PASS2, "Pass 2 — reaction code lookup UPDATE"),
-        (CHECKPOINT_PASS3, "Pass 3 — reaction name fallback UPDATE"),
-        (CHECKPOINT_PASS4, "Pass 4 — reaction code split INSERT"),
-    ]
     print(f"\n{'='*70}")
     print(f"  Per-pass summary:")
     total_rows = 0
-    for ck, label in all_passes:
+    for ck, label, _ in all_passes:
         res    = results.get(ck, {"status": "not run", "rows": 0, "secs": 0})
         status = res["status"]
         rows   = res["rows"]
@@ -900,17 +736,11 @@ def main():
     print(f"    -- DROP TABLE IF EXISTS {STAGING_SNOMED_TERMS};")
     print(f"    -- DROP TABLE IF EXISTS {STAGING_RX_MAX};")
     print(f"    -- DROP TABLE IF EXISTS {STAGING_ALLERGEN_KEYS};")
-    print(f"    -- DROP TABLE IF EXISTS {STAGING_REACTION_MAP};")
     print(f"    -- Per-run tables:")
     print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS1};")
     print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS2};")
     print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS3};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS4};")
     print(f"    DROP TABLE IF EXISTS {CHECKPOINT_TABLE};")
-    print(f"    -- If Pass 4 failed mid-run and you need to re-run, delete partial inserts first:")
-    print(f"    -- DELETE FROM {TARGET_TABLE}")
-    print(f"    --   WHERE allergy_reaction_coding_system_std IN ('SNOMED', 'NS')")
-    print(f"    --   AND udm_inc_id = 0;")
 
     if any_failed:
         sys.exit(1)

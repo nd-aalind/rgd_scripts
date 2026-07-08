@@ -22,6 +22,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 CSV_PATH   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "incremental_medications_raleigh_results.csv")
 CSV_HEADER = ["run_timestamp", "source", "status", "rows_inserted", "elapsed_secs"]
@@ -45,10 +47,10 @@ PSID           = 10
 EXTRACTED_AFTER = "2026-01-30"
 
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_INTERNAL_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
+    "user":            os.environ.get("DB_INTERNAL_USER"),
+    "password":        os.environ.get("DB_INTERNAL_PASSWORD"),
     "database":        SCHEMA,
     "charset":         "utf8mb4",
     "connect_timeout": 30,

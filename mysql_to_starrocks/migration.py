@@ -22,6 +22,9 @@ from datetime import date, datetime
 
 import pymysql
 import pymysql.cursors
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,10 +37,10 @@ log = logging.getLogger(__name__)
 # ── 1. MySQL connection ────────────────────────────────────────────────────────
 
 MYSQL_CONFIG = {
-    "host":     "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":     os.environ.get("DB_HOST"),
     "port":     3306,
-    "user":     "Aalind",
-    "password": "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password": os.environ.get("DB_PASSWORD"),
     "database": "rgd_udm_silver",
     "charset":  "utf8mb4",
     "connect_timeout": 30,
@@ -53,7 +56,7 @@ STARROCKS_CONFIG = {
     "fe_host":  "starrocks-fe.internal",
     "fe_port":  8030,
     "database": "gold",
-    "user":     "root",
+    "user":            os.environ.get("DB_INTERNAL_USER"),
     "password": "",
 }
 

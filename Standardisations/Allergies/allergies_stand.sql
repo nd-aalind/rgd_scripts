@@ -38,8 +38,9 @@ WHERE a.allergen_code IS NOT NULL AND a.allergen_code <> "";
 
 
 
--- Update 2:
 
+
+-- Update 2:
 
 WITH snomed_max AS (
     SELECT 
@@ -64,7 +65,6 @@ LEFT JOIN snomed_max sm ON a.allergy_reaction_code = sm.conceptId
 LEFT JOIN semantics.snomed s ON a.allergy_reaction_code = s.conceptId AND s.Id = sm.latest_snomed_id
 WHERE a.allergy_reaction_code IS NOT NULL AND a.allergy_reaction_code <> ""; -- only where code is present
 
-
 -- Update 3:
 
 SELECT DISTINCT
@@ -80,6 +80,7 @@ FROM rgd_udm_silver.allergies_inc a
 LEFT JOIN semantics.snomed s ON LOWER(s.term) LIKE LOWER(a.allergy_reaction_name)
 WHERE (allergy_reaction_name_std IS NULL OR allergy_reaction_name_std = "NS") -- only non standardized records
 AND a.allergy_reaction_name IS NOT NULL AND a.allergy_reaction_name <> "" ; -- only where name is present
+
 
 -- Update 4 : 
 
@@ -129,6 +130,7 @@ LEFT JOIN semantics.snomed s
     ON sc.split_code = s.conceptId
     AND s.id = sm.latest_snomed_id
 )
+
 SELECT DISTINCT a.allergy_reaction_name, a.allergy_reaction_code, a.allergy_reaction_coding_system,
 sm.allergy_reaction_name_std, sm.allergy_reaction_code_std, sm.allergy_reaction_coding_system_std
 FROM kinsula_leq.allergies a

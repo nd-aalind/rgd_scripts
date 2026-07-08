@@ -49,44 +49,64 @@ Usage:
 
 import sys
 import time
+import logging
+import os
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pymysql
 from tqdm import tqdm
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
+# ── Logging setup ──────────────────────────────────────────────────────
+os.makedirs("logs", exist_ok=True)
+_log_file = os.path.join("logs", f"diagnosis_stand_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(_log_file, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
-    "database":        "kinsula_leq",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
+    "database":        "udm_staging",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
-    "read_timeout":    21600,
-    "write_timeout":   21600,
+    "read_timeout":    1800,
+    "write_timeout":   1800,
 }
 
-BATCH_SIZE  = 200_000
-NUM_WORKERS = 4
+BATCH_SIZE  = 25_000
+NUM_WORKERS = 2
 
-TARGET_TABLE = "rgd_udm_silver.diagnosis"
-SEMANTICS_DB = "semantics"
+TARGET_TABLE     = "rgd_udm_silver.diagnosis"
+SEMANTICS_DB     = "semantics"
+FILTER_FROM_DATE = "2026-06-18"   # only process rows WHERE createddatetime >= this date; set to None to process all rows
 
 # ── Pre-materialized semantic lookup tables ───────────────────────────
-STAGING_ICD10CM      = "staging.diag_opt_icd10cm"       # icd10cm_with_parent
-STAGING_ICD10F       = "staging.diag_opt_icd10f"        # icd10_fixed
-STAGING_ICD9CM       = "staging.diag_opt_icd9cm"        # icd9cm_lookup
-STAGING_ICD9F        = "staging.diag_opt_icd9f"         # icd9_fixed
-STAGING_SOURCE_CLEAN = "staging.diag_opt_source_clean"  # pre-computed clean codes from target
-STAGING_MERGED       = "staging.diag_opt_merged"        # distinct code → icd10_desc, icd9_desc
+STAGING_ICD10CM      = "staging.diag_opt_icd10cm1"       # icd10cm_with_parent
+STAGING_ICD10F       = "staging.diag_opt_icd10f1"        # icd10_fixed
+STAGING_ICD9CM       = "staging.diag_opt_icd9cm1"        # icd9cm_lookup
+STAGING_ICD9F        = "staging.diag_opt_icd9f1"         # icd9_fixed
+STAGING_SOURCE_CLEAN = "staging.diag_opt_source_clean1"  # pre-computed clean codes from target
+STAGING_MERGED       = "staging.diag_opt_merged1"        # distinct code → icd10_desc, icd9_desc
 
 # ── Per-pass PK staging and checkpoint tables ─────────────────────────
-STAGING_PK_PASS1 = "staging.diag_opt_pk_pass1"
-STAGING_PK_PASS2 = "staging.diag_opt_pk_pass2"
-STAGING_PK_PASS3 = "staging.diag_opt_pk_pass3"
+STAGING_PK_PASS1 = "staging.diag_opt_pk_pass12"
+STAGING_PK_PASS2 = "staging.diag_opt_pk_pass23"
+STAGING_PK_PASS3 = "staging.diag_opt_pk_pass34"
 
-CHECKPOINT_TABLE = "staging.etl_checkpoint_diag_opt"
+CHECKPOINT_TABLE = "staging.etl_checkpoint_diag_opt1"
 CHECKPOINT_PASS1 = "diagnosis.opt.pass1"
 CHECKPOINT_PASS2 = "diagnosis.opt.pass2"
 CHECKPOINT_PASS3 = "diagnosis.opt.pass3_primary_flag"
@@ -167,7 +187,8 @@ SET
         WHEN m.icd9_desc  IS NOT NULL AND m.icd10_desc IS NOT NULL THEN 'Matching both ICD-9 and ICD-10'
         ELSE 'NS'
     END
-WHERE d.{BATCH_KEY} >= {pk_lo}
+WHERE (d.diag_desc_std IS NULL OR d.diag_coding_system_std IS NULL)
+  AND d.{BATCH_KEY} >= {pk_lo}
   AND d.{BATCH_KEY} < {pk_hi}
 """
 
@@ -237,7 +258,8 @@ SET
         WHEN d.primary_diagnosis_flag IS NULL THEN NULL
         ELSE 'NS'
     END
-WHERE d.{BATCH_KEY} >= {pk_lo}
+WHERE d.primary_diagnosis_flag_std IS NULL
+  AND d.{BATCH_KEY} >= {pk_lo}
   AND d.{BATCH_KEY} < {pk_hi}
 """
 
@@ -278,7 +300,7 @@ def setup_tables():
     cur  = conn.cursor()
 
     # ── 0. Ensure std columns exist on target table ───────────────────
-    print("  Checking std columns on target table...")
+    logger.info("Checking std columns on %s ...", TARGET_TABLE)
     target_schema, target_table = TARGET_TABLE.split(".")
     std_columns = [
         ("diag_desc_std",              "TEXT"),
@@ -300,15 +322,15 @@ def setup_tables():
                 (target_schema, target_table, col_name),
             )
             if ddl_cur.fetchone()[0] == 0:
-                print(f"    adding column: {col_name} {col_type} ...")
+                logger.info("  Adding column: %s %s ...", col_name, col_type)
                 ddl_cur.execute(
                     f"ALTER TABLE {TARGET_TABLE} ADD COLUMN {col_name} {col_type} DEFAULT NULL"
                 )
                 ddl_conn.commit()
                 columns_added.append(col_name)
-                print(f"    added: {col_name}")
+                logger.info("  Added: %s", col_name)
             else:
-                print(f"    already exists: {col_name}")
+                logger.info("  Already exists: %s", col_name)
     except Exception as exc:
         ddl_error = exc
         try:
@@ -326,16 +348,18 @@ def setup_tables():
             pass
 
     if ddl_error:
-        print(f"\n  ERROR: Could not add column — metadata lock detected.")
-        print(f"  Run: SELECT * FROM information_schema.processlist WHERE state LIKE '%lock%';")
-        print(f"  Then KILL the blocking process ID.")
-        print(f"\n  Original error: {ddl_error}")
+        logger.error("Could not add column — metadata lock detected.")
+        logger.error(
+            "Run: SELECT * FROM information_schema.processlist WHERE state LIKE '%%lock%%';\n"
+            "Then KILL the blocking process ID."
+        )
+        logger.error("Original error: %s", ddl_error)
         sys.exit(1)
 
     if columns_added:
-        print(f"  Columns added: {', '.join(columns_added)}")
+        logger.info("  Columns added: %s", ", ".join(columns_added))
     else:
-        print("  All std columns already present.")
+        logger.info("  All std columns already present.")
 
     # ── 1. Semantic lookup tables ─────────────────────────────────────
     lookups = [
@@ -370,166 +394,149 @@ def setup_tables():
     ]
 
     for lkp in lookups:
-        print(f"  Materializing {lkp['label']} lookup...")
+        logger.info("Materializing %s lookup ...", lkp["label"])
         if not _table_exists(cur, lkp["name"]):
             cur.execute(lkp["ddl"])
             cur.execute(f"INSERT INTO {lkp['name']} {lkp['src_sql']}")
             cur.execute(f"ALTER TABLE {lkp['name']} ADD INDEX idx_clean ({lkp['index_col']})")
             conn.commit()
-            print("    created")
+            logger.info("  Created %s", lkp["name"])
         else:
-            print("    already exists, reusing")
+            logger.info("  Already exists, reusing %s", lkp["name"])
         cur.execute(f"SELECT COUNT(*) FROM {lkp['name']}")
-        print(f"    {cur.fetchone()[0]:,} rows")
+        logger.info("  %s rows", f"{cur.fetchone()[0]:,}")
 
     # ── 2. Source clean-code staging ──────────────────────────────────
-    print("  Materializing source clean-code staging...")
-    needs_create = False
-    if not _table_exists(cur, STAGING_SOURCE_CLEAN):
-        needs_create = True
-    else:
-        cur.execute(f"SELECT COUNT(*) FROM {STAGING_SOURCE_CLEAN}")
-        existing_rows = cur.fetchone()[0]
-        if existing_rows == 0:
-            print("    found empty table (previous failed run) — dropping and recreating...")
-            cur.execute(f"DROP TABLE {STAGING_SOURCE_CLEAN}")
-            conn.commit()
-            needs_create = True
-        else:
-            print(f"    already exists, reusing  ({existing_rows:,} rows)")
+    logger.info("Materializing source clean-code staging (incremental — NULL _std rows only) ...")
+    if _table_exists(cur, STAGING_SOURCE_CLEAN):
+        cur.execute(f"DROP TABLE {STAGING_SOURCE_CLEAN}")
+        conn.commit()
 
-    if needs_create:
-        sc_exc = None
-        cur.execute("SET lock_wait_timeout = 30")
-        try:
-            cur.execute(f"""
-                CREATE TABLE {STAGING_SOURCE_CLEAN} (
-                    {BATCH_KEY}        BIGINT,
-                    diag_code_clean    CHAR(20),
-                    diag_code_upper    CHAR(30)
-                ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC
-            """)
-            cur.execute(f"""
-                INSERT INTO {STAGING_SOURCE_CLEAN}
-                SELECT
-                    {BATCH_KEY},
-                    CAST(UPPER(REPLACE(TRIM(diag_code), '.', '')) AS CHAR(20)) AS diag_code_clean,
-                    CAST(UPPER(diag_code) AS CHAR(30))                          AS diag_code_upper
-                FROM {TARGET_TABLE}
-                WHERE {BATCH_KEY} IS NOT NULL
-            """)
-            conn.commit()
-            cur.execute(f"ALTER TABLE {STAGING_SOURCE_CLEAN} ADD INDEX idx_pk ({BATCH_KEY})")
-            cur.execute(f"ALTER TABLE {STAGING_SOURCE_CLEAN} ADD INDEX idx_clean (diag_code_clean)")
-            conn.commit()
-            print("    created")
-        except Exception as e:
-            sc_exc = e
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-        cur.execute("SET lock_wait_timeout = DEFAULT")
-        if sc_exc:
-            print(f"\n  ERROR: Could not create source clean-code staging.")
-            print(f"\n  Original error: {sc_exc}")
-            cur.close()
-            conn.close()
-            sys.exit(1)
-
-    cur.execute(f"SELECT COUNT(*) FROM {STAGING_SOURCE_CLEAN}")
-    print(f"    {cur.fetchone()[0]:,} rows")
-
-    # ── 3. Pre-merged ICD lookup (distinct codes only — fast) ─────────
-    print("  Materializing pre-merged ICD lookup (icd10_desc + icd9_desc per distinct code)...")
-    needs_merged = False
-    if not _table_exists(cur, STAGING_MERGED):
-        needs_merged = True
-    else:
-        cur.execute(f"SELECT COUNT(*) FROM {STAGING_MERGED}")
-        if cur.fetchone()[0] == 0:
-            print("    found empty table (previous failed run) — dropping and recreating...")
-            cur.execute(f"DROP TABLE {STAGING_MERGED}")
-            conn.commit()
-            needs_merged = True
-        else:
-            print("    already exists, reusing")
-
-    if needs_merged:
+    sc_exc = None
+    cur.execute("SET lock_wait_timeout = 30")
+    try:
         cur.execute(f"""
-            CREATE TABLE {STAGING_MERGED} (
-                diag_code_clean  CHAR(20) NOT NULL,
-                icd10_desc       TEXT,
-                icd9_desc        TEXT
+            CREATE TABLE {STAGING_SOURCE_CLEAN} (
+                {BATCH_KEY}        BIGINT,
+                diag_code_clean    CHAR(20),
+                diag_code_upper    CHAR(30)
             ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC
         """)
         cur.execute(f"""
-            INSERT INTO {STAGING_MERGED}
+            INSERT INTO {STAGING_SOURCE_CLEAN}
             SELECT
-                sc.diag_code_clean,
-                COALESCE(icd10.LONG_DESCRIPTION, icd10f.LONG_DESCRIPTION) AS icd10_desc,
-                COALESCE(icd9.LONG_DESCRIPTION,  icd9f.LONG_DESCRIPTION)  AS icd9_desc
-            FROM (SELECT DISTINCT diag_code_clean FROM {STAGING_SOURCE_CLEAN}
-                  WHERE diag_code_clean IS NOT NULL AND diag_code_clean != '') sc
-            LEFT JOIN {STAGING_ICD10CM} icd10  ON sc.diag_code_clean = icd10.diagnosis_code_clean
-            LEFT JOIN {STAGING_ICD10F}  icd10f ON sc.diag_code_clean = icd10f.code_clean
-            LEFT JOIN {STAGING_ICD9CM}  icd9   ON sc.diag_code_clean = icd9.diagnosis_code_clean
-            LEFT JOIN {STAGING_ICD9F}   icd9f  ON sc.diag_code_clean = icd9f.diagnosis_code_clean
+                {BATCH_KEY},
+                CAST(UPPER(REPLACE(TRIM(diag_code), '.', '')) AS CHAR(20)) AS diag_code_clean,
+                CAST(UPPER(diag_code) AS CHAR(30))                          AS diag_code_upper
+            FROM {TARGET_TABLE}
+            WHERE {BATCH_KEY} IS NOT NULL
+              AND (diag_desc_std IS NULL OR diag_coding_system_std IS NULL
+                   OR primary_diagnosis_flag_std IS NULL)
+              {f"AND created_datetime >= '{FILTER_FROM_DATE}'" if FILTER_FROM_DATE else ""}
         """)
         conn.commit()
-        cur.execute(f"ALTER TABLE {STAGING_MERGED} ADD INDEX idx_clean (diag_code_clean(20))")
+        cur.execute(f"ALTER TABLE {STAGING_SOURCE_CLEAN} ADD INDEX idx_pk ({BATCH_KEY})")
+        cur.execute(f"ALTER TABLE {STAGING_SOURCE_CLEAN} ADD INDEX idx_clean (diag_code_clean)")
         conn.commit()
-        print("    created")
+        logger.info("  Created %s", STAGING_SOURCE_CLEAN)
+    except Exception as e:
+        sc_exc = e
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    cur.execute("SET lock_wait_timeout = DEFAULT")
+    if sc_exc:
+        logger.error("Could not create source clean-code staging: %s", sc_exc)
+        cur.close()
+        conn.close()
+        sys.exit(1)
+
+    cur.execute(f"SELECT COUNT(*) FROM {STAGING_SOURCE_CLEAN}")
+    logger.info("  %s rows in source clean-code staging", f"{cur.fetchone()[0]:,}")
+
+    # ── 3. Pre-merged ICD lookup (distinct codes only — fast) ─────────
+    logger.info("Materializing pre-merged ICD lookup (icd10_desc + icd9_desc per distinct code) ...")
+    if _table_exists(cur, STAGING_MERGED):
+        cur.execute(f"DROP TABLE {STAGING_MERGED}")
+        conn.commit()
+
+    cur.execute(f"""
+        CREATE TABLE {STAGING_MERGED} (
+            diag_code_clean  CHAR(20) NOT NULL,
+            icd10_desc       TEXT,
+            icd9_desc        TEXT
+        ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC
+    """)
+    cur.execute(f"""
+        INSERT INTO {STAGING_MERGED}
+        SELECT
+            sc.diag_code_clean,
+            COALESCE(icd10.LONG_DESCRIPTION, icd10f.LONG_DESCRIPTION) AS icd10_desc,
+            COALESCE(icd9.LONG_DESCRIPTION,  icd9f.LONG_DESCRIPTION)  AS icd9_desc
+        FROM (SELECT DISTINCT diag_code_clean FROM {STAGING_SOURCE_CLEAN}
+              WHERE diag_code_clean IS NOT NULL AND diag_code_clean != '') sc
+        LEFT JOIN {STAGING_ICD10CM} icd10  ON sc.diag_code_clean = icd10.diagnosis_code_clean
+        LEFT JOIN {STAGING_ICD10F}  icd10f ON sc.diag_code_clean = icd10f.code_clean
+        LEFT JOIN {STAGING_ICD9CM}  icd9   ON sc.diag_code_clean = icd9.diagnosis_code_clean
+        LEFT JOIN {STAGING_ICD9F}   icd9f  ON sc.diag_code_clean = icd9f.diagnosis_code_clean
+    """)
+    conn.commit()
+    cur.execute(f"ALTER TABLE {STAGING_MERGED} ADD INDEX idx_clean (diag_code_clean(20))")
+    conn.commit()
+    logger.info("  Created %s", STAGING_MERGED)
 
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_MERGED}")
-    print(f"    {cur.fetchone()[0]:,} rows")
+    logger.info("  %s distinct codes in merged lookup", f"{cur.fetchone()[0]:,}")
 
     # ── 4. Per-pass PK staging ─────────────────────────────────────────
+    _date_filter = f"AND created_datetime >= '{FILTER_FROM_DATE}'" if FILTER_FROM_DATE else ""
+
     pass_staging = [
         {
             "key":    CHECKPOINT_PASS1,
-            "label":  "Pass 1 (all rows)",
+            "label":  "Pass 1 (NULL diag_desc_std / diag_coding_system_std rows)",
             "stg":    STAGING_PK_PASS1,
-            "filter": f"{BATCH_KEY} IS NOT NULL",
+            "filter": f"(diag_desc_std IS NULL OR diag_coding_system_std IS NULL) AND {BATCH_KEY} IS NOT NULL {_date_filter}",
         },
         {
             "key":    CHECKPOINT_PASS2,
             "label":  "Pass 2 (Matching both ICD-9 and ICD-10 rows)",
             "stg":    STAGING_PK_PASS2,
-            "filter": f"diag_coding_system_std = 'Matching both ICD-9 and ICD-10' AND {BATCH_KEY} IS NOT NULL",
+            "filter": f"diag_coding_system_std = 'Matching both ICD-9 and ICD-10' AND {BATCH_KEY} IS NOT NULL {_date_filter}",
         },
         {
             "key":    CHECKPOINT_PASS3,
-            "label":  "Pass 3 (primary_diagnosis_flag_std)",
+            "label":  "Pass 3 (NULL primary_diagnosis_flag_std rows)",
             "stg":    STAGING_PK_PASS3,
-            "filter": f"{BATCH_KEY} IS NOT NULL",
+            "filter": f"primary_diagnosis_flag_std IS NULL AND {BATCH_KEY} IS NOT NULL {_date_filter}",
         },
     ]
 
     all_ranges = {}
     for ps in pass_staging:
-        print(f"  Creating PK staging for {ps['label']}...")
-        if not _table_exists(cur, ps["stg"]):
-            cur.execute(f"""
-                CREATE TABLE {ps['stg']} AS
-                SELECT {BATCH_KEY}
-                FROM {TARGET_TABLE}
-                WHERE {ps['filter']}
-            """)
-            cur.execute(f"ALTER TABLE {ps['stg']} ADD INDEX idx_pk ({BATCH_KEY})")
+        logger.info("Creating PK staging for %s ...", ps["label"])
+        if _table_exists(cur, ps["stg"]):
+            cur.execute(f"DROP TABLE {ps['stg']}")
             conn.commit()
-            print("    created")
-        else:
-            print("    already exists, reusing")
+        cur.execute(f"""
+            CREATE TABLE {ps['stg']} AS
+            SELECT {BATCH_KEY}
+            FROM {TARGET_TABLE}
+            WHERE {ps['filter']}
+        """)
+        cur.execute(f"ALTER TABLE {ps['stg']} ADD INDEX idx_pk ({BATCH_KEY})")
+        conn.commit()
 
         ranges, total = _build_ranges(cur, ps["stg"])
-        print(f"    {total:,} rows → {len(ranges)} batches")
+        logger.info("  %s rows → %d batches", f"{total:,}", len(ranges))
         all_ranges[ps["key"]] = ranges
 
     # ── 5. Checkpoint table ────────────────────────────────────────────
-    print("  Creating checkpoint table...")
+    logger.info("Resetting checkpoint table ...")
+    cur.execute(f"DROP TABLE IF EXISTS {CHECKPOINT_TABLE}")
     cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {CHECKPOINT_TABLE} (
+        CREATE TABLE {CHECKPOINT_TABLE} (
             source_key   VARCHAR(150) NOT NULL PRIMARY KEY,
             status       ENUM('running','done','failed') NOT NULL DEFAULT 'running',
             rows_updated BIGINT      DEFAULT 0,
@@ -539,7 +546,7 @@ def setup_tables():
         )
     """)
     conn.commit()
-    print("    ready")
+    logger.info("  Checkpoint table ready")
 
     cur.close()
     conn.close()
@@ -569,8 +576,15 @@ def _run_batch(pk_lo, pk_hi, build_fn, max_retries=3):
                 conn.rollback()
             except Exception:
                 pass
-            if getattr(exc, 'args', (None,))[0] == 1213 and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
+            err_code = getattr(exc, 'args', (None,))[0]
+            _retry_reasons = {1213: "Deadlock", 1205: "Lock wait timeout", 2013: "Connection lost"}
+            if err_code in _retry_reasons and attempt < max_retries - 1:
+                wait = 2 ** attempt
+                logger.warning(
+                    "%s on batch [%s, %s), attempt %d/%d — retrying in %ds",
+                    _retry_reasons[err_code], pk_lo, pk_hi, attempt + 1, max_retries, wait,
+                )
+                time.sleep(wait)
                 continue
             return 0, str(exc)
         finally:
@@ -587,6 +601,7 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
     if is_done(conn, checkpoint_key):
         conn.close()
         pbar.update(len(ranges))
+        logger.info("  Skipped (already done): %s", checkpoint_key)
         return {"status": "skipped", "rows": 0, "secs": 0}
 
     mark(conn, checkpoint_key, "running")
@@ -605,6 +620,7 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
             rows, err = future.result()
             total_rows += rows
             if err:
+                logger.error("Batch error: %s", err)
                 errors.append(err)
             pbar.update(1)
 
@@ -613,10 +629,12 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
     if errors:
         mark(conn, checkpoint_key, "failed", total_rows, errors[0])
         conn.close()
+        logger.error("  Pass failed after %ss: %s", elapsed, errors[0])
         return {"status": f"FAILED: {errors[0]}", "rows": total_rows, "secs": elapsed}
 
     mark(conn, checkpoint_key, "done", total_rows)
     conn.close()
+    logger.info("  Done: %s rows updated in %ss", f"{total_rows:,}", elapsed)
     return {"status": "done", "rows": total_rows, "secs": elapsed}
 
 
@@ -631,7 +649,7 @@ def rebuild_pass2_staging():
     count = cur.fetchone()[0]
 
     if count == 0:
-        print("  Rebuilding Pass 2 PK staging (now that Pass 1 has set diag_coding_system_std)...")
+        logger.info("Rebuilding Pass 2 PK staging (now that Pass 1 has set diag_coding_system_std) ...")
         cur.execute(f"DROP TABLE IF EXISTS {STAGING_PK_PASS2}")
         cur.execute(f"""
             CREATE TABLE {STAGING_PK_PASS2} AS
@@ -646,7 +664,7 @@ def rebuild_pass2_staging():
         ranges, total = _build_ranges(cur, STAGING_PK_PASS2)
         cur.close()
         conn.close()
-        print(f"    {total:,} rows → {len(ranges)} batches")
+        logger.info("  %s rows → %d batches", f"{total:,}", len(ranges))
         return ranges
     else:
         ranges, total = _build_ranges(cur, STAGING_PK_PASS2)
@@ -658,18 +676,19 @@ def rebuild_pass2_staging():
 # ── Main ───────────────────────────────────────────────────────────────
 
 def main():
-    print(f"\n{'='*70}", flush=True)
-    print(f"  Diagnosis Optimised Standardisation — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  target     : {TARGET_TABLE}")
-    print(f"  semantics  : {SEMANTICS_DB}.(icd10cm_with_parent | icd10_fixed | icd9cm_lookup | icd9_fixed)")
-    print(f"  batch_key  : {BATCH_KEY}")
-    print(f"  batch_size : {BATCH_SIZE:,}")
-    print(f"  passes     : 3  (diag_desc_std + coding system | V/E-code fix | primary_flag)")
-    print(f"  workers    : {NUM_WORKERS}  (parallel batches per pass)")
-    print(f"{'='*70}\n", flush=True)
+    logger.info("=" * 70)
+    logger.info("Diagnosis Optimised Standardisation — %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("Log file  : %s", os.path.abspath(_log_file))
+    logger.info("Target    : %s", TARGET_TABLE)
+    logger.info("Semantics : %s.(icd10cm_with_parent | icd10_fixed | icd9cm_lookup | icd9_fixed)", SEMANTICS_DB)
+    logger.info("Batch key : %s", BATCH_KEY)
+    logger.info("Batch size: %s", f"{BATCH_SIZE:,}")
+    logger.info("Passes    : 3  (diag_desc_std + coding system | V/E-code fix | primary_flag)")
+    logger.info("Workers   : %d  (parallel batches per pass)", NUM_WORKERS)
+    logger.info("Date filter: created_datetime >= %s", FILTER_FROM_DATE if FILTER_FROM_DATE else "(none — all rows)")
+    logger.info("=" * 70)
 
-    print("  Connecting to database...")
-    sys.stdout.flush()
+    logger.info("Connecting to database ...")
     all_ranges = setup_tables()
 
     passes = [
@@ -694,21 +713,21 @@ def main():
                 pbar.refresh()
 
             if not ranges:
-                print(f"\n  [SKIP] {label} — no eligible rows")
+                logger.info("[SKIP] %s — no eligible rows", label)
                 continue
 
-            print(f"\n  Starting {label} ({len(ranges)} batches)...")
+            logger.info("Starting %s (%d batches) ...", label, len(ranges))
             result = run_pass(ck, build_fn, ranges, pbar)
             results[ck] = result
 
             if result["status"].startswith("FAILED"):
-                print(f"\n  FAILED at {label}: {result['status']}")
-                print("  Aborting remaining passes.")
+                logger.error("FAILED at %s: %s", label, result["status"])
+                logger.error("Aborting remaining passes.")
                 any_failed = True
                 break
 
-    print(f"\n{'='*70}")
-    print(f"  Per-pass summary:")
+    logger.info("=" * 70)
+    logger.info("Per-pass summary:")
     total_rows = 0
     for ck, label, _ in passes:
         res    = results.get(ck, {"status": "not run", "rows": 0, "secs": 0})
@@ -723,24 +742,18 @@ def main():
             tag = "  ---"
         else:
             tag = " FAIL"; any_failed = True
-        print(f"  [{tag}] {label:<52}  {rows:>10,} rows  ({secs}s)")
+        logger.info("  [%s] %-52s  %10s rows  (%ss)", tag, label, f"{rows:,}", secs)
         if status.startswith("FAILED"):
-            print(f"         {status}")
+            logger.error("         %s", status)
 
-    print(f"\n  Total rows updated: {total_rows:,}")
-    print(f"{'='*70}")
+    logger.info("Total rows updated: %s", f"{total_rows:,}")
+    logger.info("=" * 70)
 
-    print(f"\n  Cleanup SQL (run after verifying data):")
-    print(f"    DROP TABLE IF EXISTS {STAGING_ICD10CM};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_ICD10F};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_ICD9CM};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_ICD9F};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_SOURCE_CLEAN};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_MERGED};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS1};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS2};")
-    print(f"    DROP TABLE IF EXISTS {STAGING_PK_PASS3};")
-    print(f"    DROP TABLE IF EXISTS {CHECKPOINT_TABLE};")
+    logger.info("Cleanup SQL (run after verifying data):")
+    for t in [STAGING_ICD10CM, STAGING_ICD10F, STAGING_ICD9CM, STAGING_ICD9F,
+              STAGING_SOURCE_CLEAN, STAGING_MERGED,
+              STAGING_PK_PASS1, STAGING_PK_PASS2, STAGING_PK_PASS3, CHECKPOINT_TABLE]:
+        logger.info("  DROP TABLE IF EXISTS %s;", t)
 
     if any_failed:
         sys.exit(1)

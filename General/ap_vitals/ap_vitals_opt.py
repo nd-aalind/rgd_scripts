@@ -26,16 +26,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 SOURCE_SCHEMA = "noran"   # ← change per run
 PSID          = 7         # ← change per run
 
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        SOURCE_SCHEMA,
     "charset":         "utf8mb4",
     "connect_timeout": 30,

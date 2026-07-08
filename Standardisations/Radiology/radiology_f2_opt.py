@@ -61,13 +61,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        'rgd_udm_silver',
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -83,19 +86,24 @@ TARGET_TABLE = "rgd_udm_silver.radiology"
 # ─────────────────────────────────────────────────────────────────────
 _TABLE_SUFFIX = TARGET_TABLE.replace(".", "_").replace("-", "_")
 
+# Set to a date string (e.g. '2026-06-18') to process only rows with
+# created_datetime >= this value; set to None to process all rows.
+INCREMENTAL_CUTOFF = '2026-06-18'
+_INC_SUFFIX = f"_inc_{INCREMENTAL_CUTOFF.replace('-', '')}" if INCREMENTAL_CUTOFF else ""
+
 STAGING_CODE_LOOKUP  = "staging.radf3_std_code_lookup_n_f2"               # shared across runs
 # _uid suffix = tables keyed on udm_inc_id (unique per row); forces rebuild vs old ndid-keyed tables
-STAGING_STUDY_KEYS   = f"staging.radf3_std_study_keys_uid_{_TABLE_SUFFIX}"
-STAGING_FINAL        = f"staging.radf3_final_uid_{_TABLE_SUFFIX}"
-STAGING_PK           = f"staging.radf3_std_pk_uid_{_TABLE_SUFFIX}"
-CHECKPOINT_TABLE     = f"staging.etl_checkpoint_radf3_uid_{_TABLE_SUFFIX}"
-CHECKPOINT_PASS1     = f"radiologyf3.std.pass1.uid.{_TABLE_SUFFIX}"
-CHECKPOINT_PASS2     = f"radiologyf3.std.pass2.uid.{_TABLE_SUFFIX}"
-CHECKPOINT_PASS3     = f"radiologyf3.std.pass3.uid.{_TABLE_SUFFIX}"
+STAGING_STUDY_KEYS   = f"staging.radf3_std_study_keys_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
+STAGING_FINAL        = f"staging.radf3_final_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
+STAGING_PK           = f"staging.radf3_std_pk_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
+CHECKPOINT_TABLE     = f"staging.etl_checkpoint_radf3_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
+CHECKPOINT_PASS1     = f"radiologyf3.std.pass1.uid.{_TABLE_SUFFIX}{_INC_SUFFIX}"
+CHECKPOINT_PASS2     = f"radiologyf3.std.pass2.uid.{_TABLE_SUFFIX}{_INC_SUFFIX}"
+CHECKPOINT_PASS3     = f"radiologyf3.std.pass3.uid.{_TABLE_SUFFIX}{_INC_SUFFIX}"
 
 STAGING_CPT_CLEAN    = "staging.radf3_cpt_clean_n_f1"
-STAGING_COMBO        = f"staging.radf3_combo_matches_uid_{_TABLE_SUFFIX}"
-STAGING_PK_PASS3     = f"staging.radf2_std_pk4_uid_{_TABLE_SUFFIX}"
+STAGING_COMBO        = f"staging.radf3_combo_matches_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
+STAGING_PK_PASS3     = f"staging.radf2_std_pk4_uid_{_TABLE_SUFFIX}{_INC_SUFFIX}"
 
 # udm_inc_id is the unique per-row key — ndid (patient ID) is NOT unique per radiology row
 # and caused many-to-many JOINs when matching TARGET_TABLE rows to STAGING_FINAL
@@ -172,6 +180,14 @@ def _build_ranges(cur, staging_pk):
         ranges.append((lo, hi))
 
     return ranges, total
+
+
+def _inc_filter(alias=""):
+    """Returns SQL fragment for incremental cutoff filter, or empty string if disabled."""
+    if not INCREMENTAL_CUTOFF:
+        return ""
+    col = f"{alias}.created_datetime" if alias else "created_datetime"
+    return f"\n  AND {col} >= '{INCREMENTAL_CUTOFF}'"
 
 
 # ── Batch UPDATE builders ─────────────────────────────────────────────
@@ -568,7 +584,7 @@ def setup_pass3_tables():
                 WHERE proc_code_std     IS NULL
                   AND modality_std      IS NOT NULL
                   AND body_part_std     IS NOT NULL
-                  AND contrast_type_std IS NOT NULL
+                  AND contrast_type_std IS NOT NULL{_inc_filter()}
             ),
             rad_patterns AS (
                 SELECT
@@ -768,7 +784,7 @@ def setup_pass3_tables():
                 AND (r.strength_views_std = m.strength_views_std
                      OR (r.strength_views_std IS NULL AND m.strength_views_std IS NULL))
             WHERE r.proc_code_std IS NULL
-              AND r.{BATCH_KEY} IS NOT NULL
+              AND r.{BATCH_KEY} IS NOT NULL{_inc_filter("r")}
         """)
         cur.execute(f"ALTER TABLE {STAGING_PK_PASS3} ADD INDEX idx_pk ({BATCH_KEY})")
         conn.commit()
@@ -990,7 +1006,7 @@ def setup_tables():
                     '([0-9]{{5}})\\\\s*&\\\\s*([0-9]{{5}})', '\\\\1,\\\\2'
                 ) AS study_name_normalized
             FROM {TARGET_TABLE}
-            WHERE {BATCH_KEY} IS NOT NULL
+            WHERE {BATCH_KEY} IS NOT NULL{_inc_filter()}
         """)
         cur.execute(f"ALTER TABLE {STAGING_STUDY_KEYS} ADD INDEX idx_pk ({BATCH_KEY})")
         _safe_add_index(cur, conn, STAGING_STUDY_KEYS, "study_name_normalized", "idx_study_norm")
@@ -1028,7 +1044,7 @@ def setup_tables():
             CREATE TABLE {STAGING_PK} AS
             SELECT {BATCH_KEY}
             FROM {TARGET_TABLE}
-            WHERE {BATCH_KEY} IS NOT NULL
+            WHERE {BATCH_KEY} IS NOT NULL{_inc_filter()}
         """)
         cur.execute(f"ALTER TABLE {STAGING_PK} ADD INDEX idx_pk ({BATCH_KEY})")
         conn.commit()
@@ -1115,6 +1131,8 @@ def main():
     print(f"  target     : {TARGET_TABLE}")
     print(f"  batch_key  : {BATCH_KEY}")
     print(f"  batch_size : {BATCH_SIZE:,}")
+    if INCREMENTAL_CUTOFF:
+        print(f"  incremental: created_datetime >= '{INCREMENTAL_CUTOFF}'")
     print(f"  passes     : 3  (code lookup + modality | body part + tracer | CPT probable code)")
     print(f"{'='*70}\n", flush=True)
 

@@ -34,13 +34,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        "udm_staging",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -53,9 +56,9 @@ DB_CONFIG = {
 BATCH_NAMES = 200
 MAX_WORKERS = 4
 
-TARGET_TABLE     = "udm_staging.appointment_fn_test"
-STAGING_MAP      = "staging.apt_std_map_v2"
-CHECKPOINT_TABLE = "staging.etl_checkpoint_apt_std_v2"
+TARGET_TABLE     = "udm_staging.appointment_dentr"
+STAGING_MAP      = "staging.apt_std_map_v4"
+CHECKPOINT_TABLE = "staging.etl_checkpoint_apt_std_v4"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────

@@ -56,8 +56,8 @@ UNION ALL
 SELECT
     psh.PATIENTSURGICALHISTORYID AS surgicalhistoryid,
     psh.CHARTID AS ndid,
-    NULL AS encounter_id,
-    NULL AS encounter_date,
+    NULL AS eid,
+    NULL AS enc_date,
 
     COALESCE(
         CASE

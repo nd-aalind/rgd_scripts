@@ -25,13 +25,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ─────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        'rgd_udm_silver',
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -41,15 +44,15 @@ DB_CONFIG = {
 
 BATCH_SIZE = 100_000
 
-TARGET_TABLE = "udm_staging.appointment_fn"
-FILTER_PSID  = 5
+TARGET_TABLE = "rgd_udm_silver.progressnotes_part3"
+FILTER_PSID  = 12
 
 # ── Set this to the actual primary key column of notes_part2 ──────────
 PK_COL = "ndid"   # e.g. "id", "note_id", "notes_part2_id" — verify first
 
-STAGING_PK       = f"staging.tmp_del_pgnotes_part1_psid_v16_{FILTER_PSID}"
-CHECKPOINT_TABLE = f"staging.etl_checkpoint_del_pgnotes_partn1_psid_v16_{FILTER_PSID}"
-CHECKPOINT_KEY   = f"delete.pgnotes_part1d.psid_v16d_{FILTER_PSID}"
+STAGING_PK       = f"staging.tmp_del_pgnotes_part1_psid_v17d1_{FILTER_PSID}"
+CHECKPOINT_TABLE = f"staging.etl_checkpoint_del_pgnotes_partn1_psid_v17d1_{FILTER_PSID}"
+CHECKPOINT_KEY   = f"delete.pgnotes_part1d.psid_v17dd1_{FILTER_PSID}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────

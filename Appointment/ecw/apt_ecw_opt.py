@@ -41,13 +41,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "Aalind",
-    "password":        "A@L1nd@123",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
     "database":        'udm_staging',
     "charset":         "utf8mb4",
     "connect_timeout": 30,
@@ -58,12 +61,12 @@ DB_CONFIG = {
 BATCH_SIZE = 50_000
 
 # ── Change these two variables to run for a different schema/psid ────
-SOURCE_SCHEMA = "fcn_latest"   # e.g. "kinsula_leq", "arizona", ...
-PSID          = 8
+SOURCE_SCHEMA = "dent"   # e.g. "kinsula_leq", "arizona", ...
+PSID          = 1
 
-DEST_TABLE       = "udm_staging.appointment_fn"
-STAGING_TABLE    = f"staging.tmp_ecw_apt_staging_v2_{SOURCE_SCHEMA}"
-CHECKPOINT_TABLE = f"staging.etl_checkpoint_ecw_apt_v13_{SOURCE_SCHEMA}"
+DEST_TABLE       = "udm_staging.appointment_dentr"
+STAGING_TABLE    = f"staging.tmp_ecw_apt_staging_v9_{SOURCE_SCHEMA}"
+CHECKPOINT_TABLE = f"staging.etl_checkpoint_ecw_apt_v19_{SOURCE_SCHEMA}"
 CHECKPOINT_KEY   = f"appointment.insert.{SOURCE_SCHEMA}"
 
 BATCH_KEY = "encounterID"

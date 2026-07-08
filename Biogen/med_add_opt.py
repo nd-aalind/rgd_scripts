@@ -29,13 +29,16 @@ import time
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
 # ── Configuration ────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "ndai-dev-rds-instance.cwp60ymu4ko0.us-east-1.rds.amazonaws.com",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "admin",
-    "password":        "ClAx5UNkjnM8JgLG",
+    "user":            os.environ.get("DB_ADMIN_USER"),
+    "password":        os.environ.get("DB_ADMIN_PASSWORD"),
     "database":        "rgd_udm_silver",
     "charset":         "utf8mb4",
     "connect_timeout": 30,

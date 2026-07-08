@@ -17,6 +17,9 @@ Optimizations:
 
 Airflow usage (PythonOperator):
     from airflow_vitals_ao import run_etl
+import os
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
     run_etl(params={
         'main_schema':        'tng_athena_one',
         'incremental_schema': 'tng_inc',
@@ -44,10 +47,10 @@ from tqdm import tqdm
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_INTERNAL_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
+    "user":            os.environ.get("DB_INTERNAL_USER"),
+    "password":        os.environ.get("DB_INTERNAL_PASSWORD"),
     "charset":         "utf8mb4",
     "connect_timeout": 30,
     "read_timeout":    21600,

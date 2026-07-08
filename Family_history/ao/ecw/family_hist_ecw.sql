@@ -44,18 +44,15 @@ SELECT
     NULL AS family_hist_details,
 
     COALESCE(fhx.icdCode, fhx.snomedCode) AS family_hist_code,
-
     CASE
         WHEN fhx.icdCode IS NOT NULL THEN 'ICD'
         WHEN fhx.snomedCode IS NOT NULL THEN 'SNOMED'
         ELSE NULL
     END AS family_hist_coding_system,
-
     fhx.diagnosedYear AS family_hist_notes,
     fhx.icdDesc AS family_hist_value,
     it.itemname,
     it.itemdesc,
-
     CURRENT_TIMESTAMP AS created_datetime,
     'ND' AS created_by,
     CURRENT_TIMESTAMP AS updated_datetime,
@@ -65,7 +62,6 @@ SELECT
     'Structured' AS data_type,
     8 AS psid,
     fhx.nd_extracted_date
-
 FROM familyhxdetails fhx
 LEFT JOIN enc
     ON fhx.encounterid = enc.encounterid

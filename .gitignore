@@ -1,0 +1,25 @@
+# Credentials — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+Standardisations/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# DB session files
+.cctx/sessions.db

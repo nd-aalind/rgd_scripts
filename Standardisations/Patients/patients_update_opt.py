@@ -54,17 +54,36 @@ Usage:
 
 import sys
 import time
+import logging
+import os
 from datetime import datetime
 import pymysql
 from tqdm import tqdm
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 
-# ── Configuration ─────────────────────────────────────────────────────
+# ── Logging setup ──────────────────────────────────────────────────────
+os.makedirs("logs", exist_ok=True)
+_log_file = os.path.join("logs", f"patient_stand_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler(_log_file, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+# ── Configuration ─────────────────────────────────────────────────────────────
 DB_CONFIG = {
-    "host":            "172.16.2.42",
+    "host":            os.environ.get("DB_HOST"),
     "port":            3306,
-    "user":            "nd-root-mysql",
-    "password":        "kmsamd89undsd4",
-    "database":        "rgd_udm_silver",
+    "user":            os.environ.get("DB_USER"),
+    "password":        os.environ.get("DB_PASSWORD"),
+    "database":        "udm_staging",
     "charset":         "utf8mb4",
     "connect_timeout": 30,
     "read_timeout":    21600,
@@ -81,19 +100,19 @@ BATCH_KEY_PAT  = "ndid"
 BATCH_KEY_DEMO = "ndid"   # same table, same key
 
 # ── Pre-materialized lookup tables ─────────────────────────────────────
-STAGING_RACE        = "staging.pat_std_race_n"           # semantics.race
-STAGING_ETH         = "staging.pat_std_eth_n"            # semantics.ethnicity
-STAGING_ETH_MAPPING = "staging.pat_std_eth_mapping_n"    # comma-separated codes mapping
+STAGING_RACE        = "staging.pat_std_race_n2"           # semantics.race
+STAGING_ETH         = "staging.pat_std_eth_n2"            # semantics.ethnicity
+STAGING_ETH_MAPPING = "staging.pat_std_eth_mapping_n2"    # comma-separated codes mapping
 
 # ── Per-pass PK staging tables ─────────────────────────────────────────
 # Shared between passes targeting the same table with same filter
-STAGING_PK_PAT_ALL   = "staging.pat_std_pk_patients_all_n"      # patients, all rows
-STAGING_PK_DEMO_ALL  = "staging.pat_std_pk_demo_all_n"          # patient_demographics, all rows
-STAGING_PK_DEMO_NS   = "staging.pat_std_pk_demo_race__n"      # demographics WHERE race='NS'
-STAGING_PK_PAT_ETH   = "staging.pat_std_pk_patients_eth_csv_n"  # patients with comma ethnicity
+STAGING_PK_PAT_ALL   = "staging.pat_std_pk_patients_all_n2"      # patients, all rows
+STAGING_PK_DEMO_ALL  = "staging.pat_std_pk_demo_all_n2"          # patient_demographics, all rows
+STAGING_PK_DEMO_NS   = "staging.pat_std_pk_demo_race__n2"        # demographics WHERE race='NS'
+STAGING_PK_PAT_ETH   = "staging.pat_std_pk_patients_eth_csv_n2"  # patients with comma ethnicity
 
 # ── Checkpoint ─────────────────────────────────────────────────────────
-CHECKPOINT_TABLE = "staging.etl_checkpoint_patients_standardisation_n"
+CHECKPOINT_TABLE = "staging.etl_checkpoint_patients_standardisation_n2"
 CHECKPOINT_PASS1 = "patients.std.pass1.gender"
 CHECKPOINT_PASS2 = "patients.std.pass2.race_lookup"
 CHECKPOINT_PASS3 = "patients.std.pass3.race_name_fallback"
@@ -205,7 +224,8 @@ SET
         WHEN gender IS NULL OR TRIM(gender) = '' THEN '8551'
         ELSE 'NS'
     END
-WHERE {BATCH_KEY_PAT} >= {pk_lo}
+WHERE gender_hl7_std IS NULL
+  AND {BATCH_KEY_PAT} >= {pk_lo}
   AND {BATCH_KEY_PAT} < {pk_hi}
 """
 
@@ -214,8 +234,8 @@ def build_pass2(pk_lo, pk_hi):
     """Pass 2: race lookup on patient_demographics — JOIN pre-materialized race table."""
     return f"""
 UPDATE {PATIENTS_TABLE} a
-LEFT JOIN {STAGING_RACE} b1 ON a.pat_race_code = b1.Code
-LEFT JOIN {STAGING_RACE} b2 ON LOWER(a.pat_race) = b2.race_lower
+LEFT JOIN {STAGING_RACE} b1 ON a.pat_race_code COLLATE utf8mb4_unicode_ci = b1.Code
+LEFT JOIN {STAGING_RACE} b2 ON LOWER(a.pat_race) COLLATE utf8mb4_unicode_ci = b2.race_lower
 SET
     a.pat_race_code_std = CASE
         WHEN b1.Code IS NOT NULL THEN b1.Code
@@ -231,7 +251,8 @@ SET
              AND (a.pat_race IS NULL OR TRIM(a.pat_race) = '') THEN 'Unknown'
         ELSE 'NS'
     END
-WHERE a.{BATCH_KEY_DEMO} >= {pk_lo}
+WHERE (a.pat_race_code_std IS NULL OR a.pat_race_std IS NULL)
+  AND a.{BATCH_KEY_DEMO} >= {pk_lo}
   AND a.{BATCH_KEY_DEMO} < {pk_hi}
 """
 
@@ -357,8 +378,8 @@ def build_pass4(pk_lo, pk_hi):
     """Pass 4: ethnicity lookup on patients — JOIN pre-materialized ethnicity table."""
     return f"""
 UPDATE {PATIENTS_TABLE} a
-LEFT JOIN {STAGING_ETH} b1 ON a.pat_ethnicity_code = b1.Code
-LEFT JOIN {STAGING_ETH} b2 ON LOWER(TRIM(a.pat_ethnicity)) = b2.ethnicity_lower
+LEFT JOIN {STAGING_ETH} b1 ON a.pat_ethnicity_code COLLATE utf8mb4_unicode_ci = b1.Code
+LEFT JOIN {STAGING_ETH} b2 ON LOWER(TRIM(a.pat_ethnicity)) COLLATE utf8mb4_unicode_ci = b2.ethnicity_lower
 SET
     a.pat_ethnicity_code_std = CASE
         WHEN b1.Code IS NOT NULL THEN b1.Code
@@ -384,7 +405,8 @@ SET
           OR LOWER(TRIM(a.pat_ethnicity)) LIKE '%unknown%' THEN 'Unknown'
         ELSE 'NS'
     END
-WHERE a.{BATCH_KEY_PAT} >= {pk_lo}
+WHERE (a.pat_ethnicity_code_std IS NULL OR a.pat_ethnicity_std IS NULL)
+  AND a.{BATCH_KEY_PAT} >= {pk_lo}
   AND a.{BATCH_KEY_PAT} < {pk_hi}
 """
 
@@ -393,11 +415,12 @@ def build_pass5(pk_lo, pk_hi):
     """Pass 5: comma-separated ethnicity codes — JOIN pre-materialized mapping."""
     return f"""
 UPDATE {PATIENTS_TABLE} p
-JOIN {STAGING_ETH_MAPPING} m ON p.pat_ethnicity_code = m.pat_ethnicity_code
+JOIN {STAGING_ETH_MAPPING} m ON p.pat_ethnicity_code COLLATE utf8mb4_unicode_ci = m.pat_ethnicity_code
 SET
     p.pat_ethnicity_code_std = m.pat_ethnicity_code_std,
     p.pat_ethnicity_std      = m.pat_ethnicity_std
-WHERE p.{BATCH_KEY_PAT} >= {pk_lo}
+WHERE (p.pat_ethnicity_code_std IS NULL OR p.pat_ethnicity_std IS NULL)
+  AND p.{BATCH_KEY_PAT} >= {pk_lo}
   AND p.{BATCH_KEY_PAT} < {pk_hi}
 """
 
@@ -412,7 +435,8 @@ SET pat_deceased_status_std = CASE
     WHEN pat_deceased_status IS NULL THEN 'N'
     ELSE 'NS'
 END
-WHERE {BATCH_KEY_DEMO} >= {pk_lo}
+WHERE pat_deceased_status_std IS NULL
+  AND {BATCH_KEY_DEMO} >= {pk_lo}
   AND {BATCH_KEY_DEMO} < {pk_hi}
 """
 
@@ -441,7 +465,8 @@ SET pat_marital_status_std = CASE
     WHEN TRIM(pat_marital_status) = '' OR pat_marital_status IS NULL THEN 'Unknown'
     ELSE 'NS'
 END
-WHERE {BATCH_KEY_DEMO} >= {pk_lo}
+WHERE pat_marital_status_std IS NULL
+  AND {BATCH_KEY_DEMO} >= {pk_lo}
   AND {BATCH_KEY_DEMO} < {pk_hi}
 """
 
@@ -479,25 +504,23 @@ def mark(conn, checkpoint_key, status, rows=0, error=None):
 
 def ensure_std_columns():
     """Add std columns to target tables if not present. Fails fast on metadata lock."""
-    std_cols = {
-        PATIENTS_TABLE: [
-            ("gender_hl7_std",           "VARCHAR(20)"),
-            ("gender_CDISC_std",         "VARCHAR(20)"),
-            ("gender_OMOP_std",          "VARCHAR(20)"),
-            ("gender_OMOP_concept_id",   "VARCHAR(10)"),
-            ("pat_ethnicity_code_std",   "VARCHAR(50)"),
-            ("pat_ethnicity_std",        "VARCHAR(200)"),
-        ],
-        PATIENTS_TABLE: [
-            ("pat_race_code_std",         "VARCHAR(20)"),
-            ("pat_race_std",              "VARCHAR(100)"),
-            ("pat_deceased_status_std",   "VARCHAR(5)"),
-            ("pat_marital_status_std",        "VARCHAR(50)"),
-        ],
-    }
+    std_cols = [
+        (PATIENTS_TABLE, [
+            ("gender_hl7_std",          "VARCHAR(20)"),
+            ("gender_CDISC_std",        "VARCHAR(20)"),
+            ("gender_OMOP_std",         "VARCHAR(20)"),
+            ("gender_OMOP_concept_id",  "VARCHAR(10)"),
+            ("pat_race_code_std",       "VARCHAR(20)"),
+            ("pat_race_std",            "VARCHAR(100)"),
+            ("pat_ethnicity_code_std",  "VARCHAR(50)"),
+            ("pat_ethnicity_std",       "VARCHAR(200)"),
+            ("pat_deceased_status_std", "VARCHAR(5)"),
+            ("pat_marital_status_std",  "VARCHAR(50)"),
+        ]),
+    ]
 
-    for tbl, cols in std_cols.items():
-        print(f"  Checking std columns on {tbl}...")
+    for tbl, cols in std_cols:
+        logger.info("Checking std columns on %s ...", tbl)
         ddl_conn = get_connection()
         ddl_cur  = ddl_conn.cursor()
         ddl_cur.execute("SET lock_wait_timeout = 15")
@@ -506,15 +529,15 @@ def ensure_std_columns():
         try:
             for col_name, col_type in cols:
                 if not _col_exists(ddl_cur, tbl, col_name):
-                    print(f"    adding: {col_name} {col_type} ...")
+                    logger.info("  Adding column: %s %s ...", col_name, col_type)
                     ddl_cur.execute(
                         f"ALTER TABLE {tbl} ADD COLUMN {col_name} {col_type} DEFAULT NULL"
                     )
                     ddl_conn.commit()
                     added.append(col_name)
-                    print(f"    added: {col_name}")
+                    logger.info("  Added: %s", col_name)
                 else:
-                    print(f"    exists: {col_name}")
+                    logger.info("  Already exists: %s", col_name)
         except Exception as exc:
             ddl_error = exc
             try:
@@ -532,18 +555,20 @@ def ensure_std_columns():
                 pass
 
         if ddl_error:
-            print(f"\n  ERROR: Could not add column — metadata lock on {tbl}.")
-            print(f"  Find the blocker:")
-            print(f"    SELECT id, user, state, info FROM information_schema.processlist")
-            print(f"    WHERE state LIKE '%lock%' OR state LIKE '%wait%' ORDER BY time DESC;")
-            print(f"  Then: KILL <id>;")
-            print(f"\n  Original error: {ddl_error}")
+            logger.error("Could not add column — metadata lock on %s.", tbl)
+            logger.error(
+                "Find the blocker:\n"
+                "  SELECT id, user, state, info FROM information_schema.processlist\n"
+                "  WHERE state LIKE '%%lock%%' OR state LIKE '%%wait%%' ORDER BY time DESC;\n"
+                "Then: KILL <id>;"
+            )
+            logger.error("Original error: %s", ddl_error)
             sys.exit(1)
 
         if added:
-            print(f"    Columns added: {', '.join(added)}")
+            logger.info("  Columns added: %s", ", ".join(added))
         else:
-            print(f"    All std columns already present.")
+            logger.info("  All std columns already present.")
 
 
 # ── Setup ──────────────────────────────────────────────────────────────
@@ -564,9 +589,7 @@ def setup_tables():
     cur  = conn.cursor()
 
     # ── 1. semantics.race lookup ───────────────────────────────────────
-    # race_lower pre-computed so JOIN b2 ON LOWER(a.pat_race) = b2.race_lower
-    # can use the index — avoids per-row LOWER() on the source table.
-    print("  Materializing semantics.race lookup...")
+    logger.info("Materializing semantics.race lookup ...")
     if not _table_exists(cur, STAGING_RACE):
         cur.execute(f"""
             CREATE TABLE {STAGING_RACE} AS
@@ -576,16 +599,14 @@ def setup_tables():
         cur.execute(f"ALTER TABLE {STAGING_RACE} ADD INDEX idx_code (Code(30))")
         cur.execute(f"ALTER TABLE {STAGING_RACE} ADD INDEX idx_race_lower (race_lower(100))")
         conn.commit()
-        print("    created")
+        logger.info("  Created %s", STAGING_RACE)
     else:
-        print("    already exists, reusing")
+        logger.info("  Already exists, reusing %s", STAGING_RACE)
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_RACE}")
-    print(f"    {cur.fetchone()[0]:,} rows")
+    logger.info("  %s rows in race lookup", f"{cur.fetchone()[0]:,}")
 
     # ── 2. semantics.ethnicity lookup ──────────────────────────────────
-    # ethnicity_lower pre-computed so JOIN b2 ON LOWER(TRIM(a.pat_ethnicity)) = b2.ethnicity_lower
-    # can use the index.
-    print("  Materializing semantics.ethnicity lookup...")
+    logger.info("Materializing semantics.ethnicity lookup ...")
     if not _table_exists(cur, STAGING_ETH):
         cur.execute(f"""
             CREATE TABLE {STAGING_ETH} AS
@@ -595,14 +616,14 @@ def setup_tables():
         cur.execute(f"ALTER TABLE {STAGING_ETH} ADD INDEX idx_code (Code(30))")
         cur.execute(f"ALTER TABLE {STAGING_ETH} ADD INDEX idx_eth_lower (ethnicity_lower(100))")
         conn.commit()
-        print("    created")
+        logger.info("  Created %s", STAGING_ETH)
     else:
-        print("    already exists, reusing")
+        logger.info("  Already exists, reusing %s", STAGING_ETH)
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_ETH}")
-    print(f"    {cur.fetchone()[0]:,} rows")
+    logger.info("  %s rows in ethnicity lookup", f"{cur.fetchone()[0]:,}")
 
     # ── 3. Comma-separated ethnicity mapping (JSON_TABLE pre-aggregation)
-    print("  Materializing comma-separated ethnicity mapping...")
+    logger.info("Materializing comma-separated ethnicity mapping ...")
     if not _table_exists(cur, STAGING_ETH_MAPPING):
         cur.execute(f"""
             CREATE TABLE {STAGING_ETH_MAPPING} AS
@@ -641,66 +662,64 @@ def setup_tables():
         """)
         cur.execute(f"ALTER TABLE {STAGING_ETH_MAPPING} ADD INDEX idx_code (pat_ethnicity_code(100))")
         conn.commit()
-        print("    created")
+        logger.info("  Created %s", STAGING_ETH_MAPPING)
     else:
-        print("    already exists, reusing")
+        logger.info("  Already exists, reusing %s", STAGING_ETH_MAPPING)
     cur.execute(f"SELECT COUNT(*) FROM {STAGING_ETH_MAPPING}")
-    print(f"    {cur.fetchone()[0]:,} distinct comma-separated codes mapped")
+    logger.info("  %s distinct comma-separated codes mapped", f"{cur.fetchone()[0]:,}")
 
-    # ── 4. PK staging tables ──────────────────────────────────────────
+    # ── 4. PK staging tables (always rebuilt — captures new NULL rows each run) ──
     pk_stagings = [
         {
-            "name":       STAGING_PK_PAT_ALL,
-            "label":      "patients (all rows)",
-            "table":      PATIENTS_TABLE,
-            "batch_key":  BATCH_KEY_PAT,
-            "filter":     f"{BATCH_KEY_PAT} IS NOT NULL",
+            "name":      STAGING_PK_PAT_ALL,
+            "label":     "patients (NULL gender or ethnicity std)",
+            "table":     PATIENTS_TABLE,
+            "batch_key": BATCH_KEY_PAT,
+            "filter":    f"(gender_hl7_std IS NULL OR pat_ethnicity_code_std IS NULL) AND {BATCH_KEY_PAT} IS NOT NULL",
         },
         {
-            "name":       STAGING_PK_DEMO_ALL,
-            "label":      "patient_demographics (all rows)",
-            "table":      PATIENTS_TABLE,
-            "batch_key":  BATCH_KEY_DEMO,
-            "filter":     f"{BATCH_KEY_DEMO} IS NOT NULL",
+            "name":      STAGING_PK_DEMO_ALL,
+            "label":     "patients (NULL race, deceased or marital std)",
+            "table":     PATIENTS_TABLE,
+            "batch_key": BATCH_KEY_DEMO,
+            "filter":    f"(pat_race_code_std IS NULL OR pat_deceased_status_std IS NULL OR pat_marital_status_std IS NULL) AND {BATCH_KEY_DEMO} IS NOT NULL",
         },
         {
-            "name":       STAGING_PK_DEMO_NS,
-            "label":      "patient_demographics (race = 'NS')",
-            "table":      PATIENTS_TABLE,
-            "batch_key":  BATCH_KEY_DEMO,
-            "filter":     f"(pat_race_code_std = 'NS' OR pat_race_std = 'NS') AND {BATCH_KEY_DEMO} IS NOT NULL",
+            "name":      STAGING_PK_DEMO_NS,
+            "label":     "patients (race std = 'NS' — rebuilt after Pass 2)",
+            "table":     PATIENTS_TABLE,
+            "batch_key": BATCH_KEY_DEMO,
+            "filter":    f"(pat_race_code_std = 'NS' OR pat_race_std = 'NS') AND {BATCH_KEY_DEMO} IS NOT NULL",
         },
         {
-            "name":       STAGING_PK_PAT_ETH,
-            "label":      "patients (comma ethnicity codes)",
-            "table":      PATIENTS_TABLE,
-            "batch_key":  BATCH_KEY_PAT,
-            "filter":     f"pat_ethnicity_code IS NOT NULL AND pat_ethnicity_code <> '' AND pat_ethnicity_code LIKE '%,%' AND {BATCH_KEY_PAT} IS NOT NULL",
+            "name":      STAGING_PK_PAT_ETH,
+            "label":     "patients (NULL ethnicity std, comma codes)",
+            "table":     PATIENTS_TABLE,
+            "batch_key": BATCH_KEY_PAT,
+            "filter":    f"pat_ethnicity_code_std IS NULL AND pat_ethnicity_code IS NOT NULL AND pat_ethnicity_code <> '' AND pat_ethnicity_code LIKE '%,%' AND {BATCH_KEY_PAT} IS NOT NULL",
         },
     ]
 
     for ps in pk_stagings:
-        print(f"  Creating PK staging for {ps['label']}...")
-        if not _table_exists(cur, ps["name"]):
-            cur.execute(f"""
-                CREATE TABLE {ps['name']} AS
-                SELECT {ps['batch_key']}
-                FROM {ps['table']}
-                WHERE {ps['filter']}
-            """)
-            cur.execute(f"ALTER TABLE {ps['name']} ADD INDEX idx_pk ({ps['batch_key']})")
-            conn.commit()
-            print("    created")
-        else:
-            print("    already exists, reusing")
+        logger.info("Rebuilding PK staging for %s ...", ps["label"])
+        cur.execute(f"DROP TABLE IF EXISTS {ps['name']}")
+        cur.execute(f"""
+            CREATE TABLE {ps['name']} AS
+            SELECT {ps['batch_key']}
+            FROM {ps['table']}
+            WHERE {ps['filter']}
+        """)
+        cur.execute(f"ALTER TABLE {ps['name']} ADD INDEX idx_pk ({ps['batch_key']})")
+        conn.commit()
         cur.execute(f"SELECT COUNT(*) FROM {ps['name']}")
         total = cur.fetchone()[0]
-        print(f"    {total:,} rows")
+        logger.info("  %s rows staged", f"{total:,}")
 
-    # ── 5. Checkpoint table ───────────────────────────────────────────
-    print("  Creating checkpoint table...")
+    # ── 5. Checkpoint table — reset each run so new rows aren't skipped ───────
+    logger.info("Resetting checkpoint table ...")
+    cur.execute(f"DROP TABLE IF EXISTS {CHECKPOINT_TABLE}")
     cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {CHECKPOINT_TABLE} (
+        CREATE TABLE {CHECKPOINT_TABLE} (
             source_key   VARCHAR(150) NOT NULL PRIMARY KEY,
             status       ENUM('running','done','failed') NOT NULL DEFAULT 'running',
             rows_updated BIGINT      DEFAULT 0,
@@ -710,10 +729,9 @@ def setup_tables():
         )
     """)
     conn.commit()
-    print("    ready")
+    logger.info("  Checkpoint table ready")
 
-    # ── 6. Compute batch ranges per pass ────────────────────��─────────
-    # Pass 3 (race NS) staging may be 0 rows before Pass 2 runs — handled in main()
+    # ── 6. Compute batch ranges per pass ──────────────────────────────
     all_ranges = {
         CHECKPOINT_PASS1: _build_ranges(cur, STAGING_PK_PAT_ALL,  BATCH_KEY_PAT)[0],
         CHECKPOINT_PASS2: _build_ranges(cur, STAGING_PK_DEMO_ALL, BATCH_KEY_DEMO)[0],
@@ -725,7 +743,7 @@ def setup_tables():
     }
 
     for ck, ranges in all_ranges.items():
-        print(f"    {ck.split('.')[-1]}: {len(ranges)} batches")
+        logger.info("  %-40s %d batches", ck.split(".")[-1], len(ranges))
 
     cur.close()
     conn.close()
@@ -735,11 +753,10 @@ def setup_tables():
 # ── Pass 3 staging rebuild (after Pass 2 populates pat_race_code_std) ─
 
 def rebuild_pass3_staging():
-    """Rebuild Pass 3 PK staging after Pass 2 has populated pat_race_code_std/pat_race_std.
-    Always drops and recreates so rows newly set to 'NS' by Pass 2 are included."""
+    """Rebuild Pass 3 PK staging after Pass 2 has populated pat_race_code_std/pat_race_std."""
     conn = get_connection()
     cur  = conn.cursor()
-    print("  Rebuilding Pass 3 PK staging (after Pass 2 populated race std columns)...")
+    logger.info("Rebuilding Pass 3 PK staging (after Pass 2 populated race std columns) ...")
     cur.execute(f"DROP TABLE IF EXISTS {STAGING_PK_DEMO_NS}")
     cur.execute(f"""
         CREATE TABLE {STAGING_PK_DEMO_NS} AS
@@ -751,7 +768,7 @@ def rebuild_pass3_staging():
     cur.execute(f"ALTER TABLE {STAGING_PK_DEMO_NS} ADD INDEX idx_pk ({BATCH_KEY_DEMO})")
     conn.commit()
     ranges, total = _build_ranges(cur, STAGING_PK_DEMO_NS, BATCH_KEY_DEMO)
-    print(f"    {total:,} rows → {len(ranges)} batches")
+    logger.info("  %s rows → %d batches", f"{total:,}", len(ranges))
     cur.close()
     conn.close()
     return ranges
@@ -765,6 +782,7 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
     if is_done(conn, checkpoint_key):
         conn.close()
         pbar.update(len(ranges))
+        logger.info("  Skipped (already done): %s", checkpoint_key)
         return {"status": "skipped", "rows": 0, "secs": 0}
 
     mark(conn, checkpoint_key, "running")
@@ -780,7 +798,9 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
             sql = build_fn(pk_lo, pk_hi)
             cur.execute(sql)
             conn.commit()
-            total_rows += cur.rowcount
+            batch_rows = cur.rowcount
+            total_rows += batch_rows
+            logger.debug("  Batch [%s, %s): %d rows updated", pk_lo, pk_hi, batch_rows)
             pbar.update(1)
 
         cur.execute("SET unique_checks = 1")
@@ -790,11 +810,13 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
         elapsed = round(time.time() - t0, 1)
         mark(conn, checkpoint_key, "done", total_rows)
         conn.close()
+        logger.info("  Done: %s rows updated in %ss", f"{total_rows:,}", elapsed)
         return {"status": "done", "rows": total_rows, "secs": elapsed}
 
     except Exception as exc:
         elapsed = round(time.time() - t0, 1)
         mark(conn, checkpoint_key, "failed", total_rows, str(exc))
+        logger.error("  Pass failed after %ss: %s", elapsed, exc)
         try:
             conn.close()
         except Exception:
@@ -805,27 +827,26 @@ def run_pass(checkpoint_key, build_fn, ranges, pbar):
 # ── Main ───────────────────────────────────────────────────────────────
 
 def main():
-    print(f"\n{'='*70}", flush=True)
-    print(f"  Patients Standardisation UPDATE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  targets    : {PATIENTS_TABLE}")
-    print(f"             : {PATIENTS_TABLE}")
-    print(f"  semantics  : {SEMANTICS_DB}.(race | ethnicity)")
-    print(f"  batch_size : {BATCH_SIZE:,}")
-    print(f"  passes     : 7")
-    print(f"{'='*70}\n", flush=True)
+    logger.info("=" * 70)
+    logger.info("Patients Standardisation UPDATE — %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    logger.info("Log file  : %s", os.path.abspath(_log_file))
+    logger.info("Target    : %s", PATIENTS_TABLE)
+    logger.info("Semantics : %s.(race | ethnicity)", SEMANTICS_DB)
+    logger.info("Batch size: %s", f"{BATCH_SIZE:,}")
+    logger.info("Passes    : 7")
+    logger.info("=" * 70)
 
-    print("  Connecting to database...")
-    sys.stdout.flush()
+    logger.info("Connecting to database ...")
     all_ranges = setup_tables()
 
     passes = [
-        (CHECKPOINT_PASS1, "Pass 1 — gender (patients, all rows)",                  build_pass1),
-        (CHECKPOINT_PASS2, "Pass 2 — race lookup (demographics, all rows)",          build_pass2),
-        (CHECKPOINT_PASS3, "Pass 3 — race name fallback (demographics, NS rows)",    build_pass3),
-        (CHECKPOINT_PASS4, "Pass 4 — ethnicity lookup (patients, all rows)",         build_pass4),
-        (CHECKPOINT_PASS5, "Pass 5 — ethnicity CSV split (patients, CSV rows)",      build_pass5),
-        (CHECKPOINT_PASS6, "Pass 6 — deceased status (demographics, all rows)",      build_pass6),
-        (CHECKPOINT_PASS7, "Pass 7 — marital status (demographics, all rows)",       build_pass7),
+        (CHECKPOINT_PASS1, "Pass 1 — gender (patients, all rows)",               build_pass1),
+        (CHECKPOINT_PASS2, "Pass 2 — race lookup (demographics, all rows)",       build_pass2),
+        (CHECKPOINT_PASS3, "Pass 3 — race name fallback (demographics, NS rows)", build_pass3),
+        (CHECKPOINT_PASS4, "Pass 4 — ethnicity lookup (patients, all rows)",      build_pass4),
+        (CHECKPOINT_PASS5, "Pass 5 — ethnicity CSV split (patients, CSV rows)",   build_pass5),
+        (CHECKPOINT_PASS6, "Pass 6 — deceased status (demographics, all rows)",   build_pass6),
+        (CHECKPOINT_PASS7, "Pass 7 — marital status (demographics, all rows)",    build_pass7),
     ]
 
     results = {}
@@ -845,21 +866,21 @@ def main():
                 ranges = all_ranges.get(ck, [])
 
             if not ranges:
-                print(f"\n  [SKIP] {label} — no eligible rows")
+                logger.info("[SKIP] %s — no eligible rows", label)
                 continue
 
-            print(f"\n  Starting {label} ({len(ranges)} batches)...")
+            logger.info("Starting %s (%d batches) ...", label, len(ranges))
             result = run_pass(ck, build_fn, ranges, pbar)
             results[ck] = result
 
             if result["status"].startswith("FAILED"):
-                print(f"\n  FAILED at {label}: {result['status']}")
-                print("  Aborting remaining passes.")
+                logger.error("FAILED at %s: %s", label, result["status"])
+                logger.error("Aborting remaining passes.")
                 any_failed = True
                 break
 
-    print(f"\n{'='*70}")
-    print(f"  Per-pass summary:")
+    logger.info("=" * 70)
+    logger.info("Per-pass summary:")
     total_rows = 0
     for ck, label, _ in passes:
         res = results.get(ck, {"status": "not run", "rows": 0, "secs": 0})
@@ -874,18 +895,18 @@ def main():
             tag = "  ---"
         else:
             tag = " FAIL"; any_failed = True
-        print(f"  [{tag}] {label:<55}  {rows:>10,} rows  ({secs}s)")
+        logger.info("  [%s] %-55s  %10s rows  (%ss)", tag, label, f"{rows:,}", secs)
         if status.startswith("FAILED"):
-            print(f"         {status}")
+            logger.error("         %s", status)
 
-    print(f"\n  Total rows updated: {total_rows:,}")
-    print(f"{'='*70}")
+    logger.info("Total rows updated: %s", f"{total_rows:,}")
+    logger.info("=" * 70)
 
-    print(f"\n  Cleanup SQL (run after verifying data):")
+    logger.info("Cleanup SQL (run after verifying data):")
     for t in [STAGING_RACE, STAGING_ETH, STAGING_ETH_MAPPING,
               STAGING_PK_PAT_ALL, STAGING_PK_DEMO_ALL,
               STAGING_PK_DEMO_NS, STAGING_PK_PAT_ETH, CHECKPOINT_TABLE]:
-        print(f"    DROP TABLE IF EXISTS {t};")
+        logger.info("  DROP TABLE IF EXISTS %s;", t)
 
     if any_failed:
         sys.exit(1)
